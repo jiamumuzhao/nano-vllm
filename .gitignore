@@ -1,0 +1,23 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo 
+# C/C++ complied files
+*.so
+# Claude local configuration
+.claude/
+# Package distribution
+dist/
+build/
+*.egg-info/
+#Virtual environment
+.venv/
+venv/
+# IDE configuration
+.vscode/
+.idea/
+# Log and system files
+*.log
+.DS_Store
+# Private files
+OPTIMIZATION_ROADMAP.md
