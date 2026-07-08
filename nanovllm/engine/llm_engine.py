@@ -69,22 +69,32 @@ class LLMEngine:
         for prompt, sp in zip(prompts, sampling_params):
             self.add_request(prompt, sp)
         outputs = {}
-        prefill_throughput = decode_throughput = 0.
+        total_prefill_time = total_decode_time = 0.
+        total_prefill_tokens = total_decode_tokens = 0
         while not self.is_finished():
             t = perf_counter()
             output, num_tokens = self.step()
+            elapsed = perf_counter() - t
             if num_tokens > 0:
-                prefill_throughput = num_tokens / (perf_counter() - t)
+                total_prefill_time += elapsed
+                total_prefill_tokens += num_tokens
             else:
-                decode_throughput = -num_tokens / (perf_counter() - t)
+                total_decode_time += elapsed
+                total_decode_tokens += -num_tokens
+            prefill_speed = total_prefill_tokens / total_prefill_time if total_prefill_time else 0.
+            decode_speed = total_decode_tokens / total_decode_time if total_decode_time else 0.
             pbar.set_postfix({
-                "Prefill": f"{int(prefill_throughput)}tok/s",
-                "Decode": f"{int(decode_throughput)}tok/s",
+                "Prefill": f"{int(prefill_speed)}tok/s",
+                "Decode": f"{int(decode_speed)}tok/s",
             })
             for seq_id, token_ids in output:
                 outputs[seq_id] = token_ids
                 pbar.update(1)
         pbar.close()
+        print(f"\n{'='*40}")
+        print(f"  Prefill: {total_prefill_tokens:>6} tokens in {total_prefill_time:.2f}s  ({total_prefill_tokens/total_prefill_time:.1f} tok/s)")
+        print(f"  Decode:  {total_decode_tokens:>6} tokens in {total_decode_time:.2f}s  ({total_decode_tokens/total_decode_time:.1f} tok/s)")
+        print(f"{'='*40}")
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
         return outputs

@@ -23,10 +23,14 @@ class ModelRunner:
         self.rank = rank
         self.event = event
 
-        dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
+        dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
+        model_dtype = hf_config.torch_dtype if config.dtype == "auto" else dtype_map[config.dtype]
+        self.model_dtype = model_dtype
+
         torch.cuda.set_device(rank)
+        dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank, device_id=rank)
         default_dtype = torch.get_default_dtype()
-        torch.set_default_dtype(hf_config.dtype)
+        torch.set_default_dtype(model_dtype)
         torch.set_default_device("cuda")
         self.model = Qwen3ForCausalLM(hf_config)
         load_model(self.model, config.model)
@@ -89,6 +93,7 @@ class ModelRunner:
         return method(*args)
 
     def warmup_model(self):
+        print("Warming up the model...")
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
@@ -109,10 +114,10 @@ class ModelRunner:
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * hf_config.dtype.itemsize
+        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * self.model_dtype.itemsize
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
         assert config.num_kvcache_blocks > 0
-        self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
+        self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim, dtype=self.model_dtype)
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
@@ -122,7 +127,7 @@ class ModelRunner:
 
     def prepare_block_tables(self, seqs: list[Sequence]):
         max_len = max(len(seq.block_table) for seq in seqs)
-        block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
+        block_tables = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]# Tensor must be rectangular, so we pad with -1
         block_tables = torch.tensor(block_tables, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         return block_tables
 
@@ -179,6 +184,20 @@ class ModelRunner:
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
             slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens  - 1)
+            '''
+            if is_prefill and seq.num_cached_tokens < seq.num_tokens:
+                continue
+            seq.append_token(token_id)
+            
+            def append_token(self, token_id: int):
+                self.token_ids.append(token_id)
+                self.last_token = token_id
+                self.num_tokens += 1
+            
+            @property
+            def last_block_num_tokens(self):
+                return self.num_tokens - (self.num_blocks - 1) * self.block_size
+            '''
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)

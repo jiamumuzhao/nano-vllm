@@ -1,16 +1,17 @@
 import os
 from nanovllm import LLM, SamplingParams
 from transformers import AutoTokenizer
+import time
 
 
 def main():
     path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
     tokenizer = AutoTokenizer.from_pretrained(path)
-    llm = LLM(path, enforce_eager=True, tensor_parallel_size=2)
+    llm = LLM(path, enforce_eager=True, tensor_parallel_size=2, dtype="float16", gpu_memory_utilization=0.9)
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
     prompts = [
-        "introduce yourself",
-        "list all prime numbers within 100",
+       "什么是LLM",
+       "列举100以内的质数"
     ]
     prompts = [
         tokenizer.apply_chat_template(
@@ -21,6 +22,7 @@ def main():
         for prompt in prompts
     ]
     outputs = llm.generate(prompts, sampling_params)
+   
 
     for prompt, output in zip(prompts, outputs):
         print("\n")

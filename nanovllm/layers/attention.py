@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -37,8 +36,210 @@ def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor,
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
     assert k_cache.stride(1) == D and v_cache.stride(1) == D
     assert slot_mapping.numel() == N
-    store_kvcache_kernel[(N,)](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
+    store_kvcache_kernel[(N,)](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)# key.stride(0)==num_heads*head_dim
 
+
+# ---------------------------------------------------------------------------
+# Varlen prefill: one (seq, head) program iterates over the seq's Q tiles
+# and scans the full KV range with online safe softmax.
+# ---------------------------------------------------------------------------
+
+@triton.jit
+def _varlen_prefill_kernel(
+    q_ptr, k_ptr, v_ptr, o_ptr,
+    cu_seqlens_q_ptr, cu_seqlens_k_ptr,
+    scale,
+    stride_q_t, stride_q_h, stride_q_d,# token,num_heads,head_dim
+    stride_k_t, stride_k_h, stride_k_d,
+    stride_v_t, stride_v_h, stride_v_d,
+    stride_o_t, stride_o_h, stride_o_d,
+    BLOCK_Q: tl.constexpr,
+    BLOCK_KV: tl.constexpr,
+    D: tl.constexpr,
+    N_HEADS: tl.constexpr,
+    N_KV_HEADS: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    seq_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+
+    # Sequence boundaries in the 1D layout
+    seq_q_start = tl.load(cu_seqlens_q_ptr + seq_id)
+    seq_q_end = tl.load(cu_seqlens_q_ptr + seq_id + 1)
+    seq_k_start = tl.load(cu_seqlens_k_ptr + seq_id)
+    seq_k_end = tl.load(cu_seqlens_k_ptr + seq_id + 1)
+
+    seq_q_len = seq_q_end - seq_q_start
+    seq_k_len = seq_k_end - seq_k_start
+    prefix_len = seq_k_len - seq_q_len
+
+    # GQA: map query head to KV head
+    if N_HEADS == N_KV_HEADS:
+        kv_head_id = head_id
+    else:
+        kv_head_id = head_id // (N_HEADS // N_KV_HEADS)
+
+    offs_d = tl.arange(0, D)
+
+    # Tile over query positions within this sequence
+    for q_start in range(seq_q_start, seq_q_end, BLOCK_Q):
+        offs_q = q_start + tl.arange(0, BLOCK_Q)
+        q_mask = offs_q < seq_q_end
+
+        # Load Q tile  (BLOCK_Q, D)
+        q = tl.load(
+            q_ptr + offs_q[:, None] * stride_q_t + head_id * stride_q_h + offs_d[None, :] * stride_q_d,
+            mask=q_mask[:, None],
+            other=0.0,
+        )
+
+        # Online safe softmax state
+        m_i = tl.full([BLOCK_Q], float("-inf"), dtype=tl.float32)
+        l_i = tl.zeros([BLOCK_Q], dtype=tl.float32)
+        acc = tl.zeros([BLOCK_Q, D], dtype=tl.float32)
+
+        # Tile over KV positions
+        for kv_start in range(seq_k_start, seq_k_end, BLOCK_KV):
+            offs_kv = kv_start + tl.arange(0, BLOCK_KV)
+            kv_mask = offs_kv < seq_k_end
+
+            # Load K, V tile  (BLOCK_KV, D)
+            k = tl.load(
+                k_ptr + offs_kv[:, None] * stride_k_t + kv_head_id * stride_k_h + offs_d[None, :] * stride_k_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+            v = tl.load(
+                v_ptr + offs_kv[:, None] * stride_v_t + kv_head_id * stride_v_h + offs_d[None, :] * stride_v_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+
+            # Scores  (BLOCK_Q, BLOCK_KV)
+            scores = tl.dot(q, tl.trans(k))
+            scores *= scale
+
+            if CAUSAL:
+                q_local = offs_q - seq_q_start          # (BLOCK_Q,)
+                k_local = offs_kv - seq_k_start          # (BLOCK_KV,)
+                causal_mask = k_local[None, :] <= q_local[:, None] + prefix_len
+                valid_mask = q_mask[:, None] & kv_mask[None, :]
+                scores = tl.where(valid_mask & causal_mask, scores, float("-inf"))
+
+            # Online safe softmax step
+            m_new = tl.maximum(m_i, tl.max(scores, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.exp(scores - m_new[:, None])
+
+            l_i = l_i * alpha + tl.sum(p, 1)
+            acc = acc * alpha[:, None] + tl.dot(p.to(tl.float16), v)
+            m_i = m_new
+
+        # Normalise and store
+        o = acc / l_i[:, None]
+        tl.store(
+            o_ptr + offs_q[:, None] * stride_o_t + head_id * stride_o_h + offs_d[None, :] * stride_o_d,
+            o.to(o_ptr.dtype.element_ty),
+            mask=q_mask[:, None],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Paged decode: one (batch, head) program reads KV from page tables and
+# only touches valid blocks.
+# ---------------------------------------------------------------------------
+
+@triton.jit
+def _decode_paged_kernel(
+    q_ptr, k_cache_ptr, v_cache_ptr, o_ptr,
+    block_tables_ptr, context_lens_ptr,
+    scale,
+    stride_q_b, stride_q_h, stride_q_d,
+    stride_kc_blk, stride_kc_t, stride_kc_h, stride_kc_d,
+    stride_vc_blk, stride_vc_t, stride_vc_h, stride_vc_d,
+    stride_bt_b,
+    stride_o_b, stride_o_h, stride_o_d,
+    BLOCK_KV: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    D: tl.constexpr,
+    N_HEADS: tl.constexpr,
+    N_KV_HEADS: tl.constexpr,
+):
+    batch_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+
+    seq_len = tl.load(context_lens_ptr + batch_id)
+    if seq_len <= 0:
+        return
+
+    # GQA
+    if N_HEADS == N_KV_HEADS:
+        kv_head_id = head_id
+    else:
+        kv_head_id = head_id // (N_HEADS // N_KV_HEADS)
+
+    num_blocks = (seq_len + BLOCK_SIZE - 1) // BLOCK_SIZE
+    offs_d = tl.arange(0, D)
+
+    # Load single query vector  (D,)
+    q = tl.load(q_ptr + batch_id * stride_q_b + head_id * stride_q_h + offs_d * stride_q_d)
+
+    m_i = float("-inf")
+    l_i = 0.0
+    acc = tl.zeros([D], dtype=tl.float32)
+    '''
+    block->tile
+    '''
+
+    # Iterate over pages
+    for blk_idx in range(0, num_blocks):
+        blk_id = tl.load(block_tables_ptr + batch_id * stride_bt_b + blk_idx)
+        blk_start = blk_idx * BLOCK_SIZE
+        tokens_in_blk = tl.minimum(BLOCK_SIZE, seq_len - blk_start)
+
+        # Tile within the block
+        for t_start in range(0, tokens_in_blk, BLOCK_KV):
+            kv_len = tl.minimum(BLOCK_KV, tokens_in_blk - t_start)
+            offs_t = t_start + tl.arange(0, BLOCK_KV)
+            kv_mask = offs_t < tokens_in_blk
+
+            # Load K tile
+            k = tl.load(
+                k_cache_ptr + blk_id * stride_kc_blk + offs_t[:, None] * stride_kc_t + kv_head_id * stride_kc_h + offs_d[None, :] * stride_kc_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+            # Load V tile
+            v = tl.load(
+                v_cache_ptr + blk_id * stride_vc_blk + offs_t[:, None] * stride_vc_t + kv_head_id * stride_vc_h + offs_d[None, :] * stride_vc_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+
+            # Score  (BLOCK_KV,)
+            scores = tl.sum(q[None, :] * k, axis=1)
+            scores *= scale
+            scores = tl.where(kv_mask, scores, float("-inf"))
+
+            # Online safe softmax (scalar m_i / l_i since 1 query)
+            m_new = tl.maximum(m_i, tl.max(scores))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.exp(scores - m_new)
+
+            l_i = l_i * alpha + tl.sum(p)
+            acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+            m_i = m_new
+
+    o = acc / l_i
+    tl.store(
+        o_ptr + batch_id * stride_o_b + head_id * stride_o_h + offs_d * stride_o_d,
+        o.to(o_ptr.dtype.element_ty),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Attention module
+# ---------------------------------------------------------------------------
 
 class Attention(nn.Module):
 
@@ -63,92 +264,100 @@ class Attention(nn.Module):
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
         if context.is_prefill:
-            if context.block_tables is not None:    # prefix cache
-                o = self._prefill_paged(q, k_cache, v_cache, context)
+            # cu_seqlens_k[-1] > cu_seqlens_q[-1] means cached prefix exists
+            if context.cu_seqlens_k[-1] > context.cu_seqlens_q[-1]:
+                o = self._prefill_paged(q, k, v, k_cache, v_cache, context)
             else:
-                o = self._prefill_dense(q, k, v, context)
-        else:    # decode
-            o = self._decode(q, k_cache, v_cache, context)
+                o = self._prefill_varlen(q, k, v, context)
+        else:
+            o = self._decode_paged(q, k_cache, v_cache, context)
         return o
 
-    def _prefill_dense(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, context) -> torch.Tensor:
-        cu_q = context.cu_seqlens_q.tolist()
-        outputs = []
-        for i in range(len(cu_q) - 1):
-            s, e = cu_q[i], cu_q[i + 1]
-            if s == e:
-                continue
-            q_i = q[s:e].transpose(0, 1).unsqueeze(0)     # (1, H,   T, D)
-            k_i = k[s:e].transpose(0, 1).unsqueeze(0)     # (1, Hkv, T, D)
-            v_i = v[s:e].transpose(0, 1).unsqueeze(0)
-            out = F.scaled_dot_product_attention(
-                q_i, k_i, v_i,
-                is_causal=True,
-                scale=self.scale,
-                enable_gqa=self.enable_gqa,
-            )
-            outputs.append(out.squeeze(0).transpose(0, 1))    # (T, H, D)
-        return torch.cat(outputs, dim=0)
+    # ------------------------------------------------------------------
+    # Varlen prefill (dense – no prefix)
+    # ------------------------------------------------------------------
 
-    def _prefill_paged(self, q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
+    def _prefill_varlen(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, context) -> torch.Tensor:
+        assert self.head_dim in (64, 128, 256), "head_dim must be a power of 2"
+        batch_size = context.cu_seqlens_q.numel() - 1
+        o = torch.empty_like(q)
+
+        grid = (batch_size, self.num_heads)
+        _varlen_prefill_kernel[grid](
+            q, k, v, o,
+            context.cu_seqlens_q, context.cu_seqlens_k,
+            self.scale,
+            q.stride(0), q.stride(1), q.stride(2),
+            k.stride(0), k.stride(1), k.stride(2),
+            v.stride(0), v.stride(1), v.stride(2),
+            o.stride(0), o.stride(1), o.stride(2),
+            BLOCK_Q=32, BLOCK_KV=64,
+            D=self.head_dim,
+            N_HEADS=self.num_heads,
+            N_KV_HEADS=self.num_kv_heads,
+            CAUSAL=True,
+        )
+        return o
+
+    # ------------------------------------------------------------------
+    # Paged prefill (prefix cache) — assemble full K/V then varlen
+    # ------------------------------------------------------------------
+
+    def _prefill_paged(self, q: torch.Tensor, k_new: torch.Tensor, v_new: torch.Tensor,
+                       k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
+        cu_q, cu_k = context.cu_seqlens_q, context.cu_seqlens_k
         block_size = k_cache.size(1)
-        num_kv_heads = k_cache.size(2)
-        head_dim = k_cache.size(3)
-        cu_q = context.cu_seqlens_q.tolist()
-        cu_k = context.cu_seqlens_k.tolist()
-        block_tables = context.block_tables
-        outputs = []
-        for i in range(len(cu_q) - 1):
-            qs, qe = cu_q[i], cu_q[i + 1]
-            seqlen_q = qe - qs
-            seqlen_k = cu_k[i + 1] - cu_k[i]
-            if seqlen_q == 0:
-                continue
-            num_blocks_needed = (seqlen_k + block_size - 1) // block_size
-            bt = block_tables[i, :num_blocks_needed].clamp(min=0)
-            k_i = k_cache[bt].reshape(-1, num_kv_heads, head_dim)[:seqlen_k]
-            v_i = v_cache[bt].reshape(-1, num_kv_heads, head_dim)[:seqlen_k]
-            q_i = q[qs:qe].transpose(0, 1).unsqueeze(0)
-            k_i = k_i.transpose(0, 1).unsqueeze(0)
-            v_i = v_i.transpose(0, 1).unsqueeze(0)
-            offset = seqlen_k - seqlen_q
-            q_idx = torch.arange(seqlen_q, device=q.device).unsqueeze(1)
-            k_idx = torch.arange(seqlen_k, device=q.device).unsqueeze(0)
-            attn_mask = k_idx <= (q_idx + offset)
-            out = F.scaled_dot_product_attention(
-                q_i, k_i, v_i,
-                attn_mask=attn_mask,
-                scale=self.scale,
-                enable_gqa=self.enable_gqa,
-            )
-            outputs.append(out.squeeze(0).transpose(0, 1))
-        return torch.cat(outputs, dim=0)
+        batch_size = cu_q.numel() - 1
 
-    def _decode(self, q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
+        total_k_len = cu_k[-1].item()
+
+        k_full = torch.empty(total_k_len, *k_new.shape[1:], dtype=k_new.dtype, device=k_new.device)
+        v_full = torch.empty(total_k_len, *v_new.shape[1:], dtype=v_new.dtype, device=v_new.device)
+        block_tables = context.block_tables
+
+        for i in range(batch_size):
+            ks = int(cu_k[i]); ke = int(cu_k[i + 1])
+            qs = int(cu_q[i]); qe = int(cu_q[i + 1])
+            prefix_len = (ke - ks) - (qe - qs)      # = cached tokens
+
+            if prefix_len > 0:
+                nblk = (prefix_len + block_size - 1) // block_size
+                bt = block_tables[i, :nblk].clamp(min=0)
+                k_full[ks:ks + prefix_len] = k_cache[bt].reshape(-1, *k_new.shape[1:])[:prefix_len]
+                v_full[ks:ks + prefix_len] = v_cache[bt].reshape(-1, *v_new.shape[1:])[:prefix_len]
+                k_full[ks + prefix_len:ke] = k_new[qs:qe]
+                v_full[ks + prefix_len:ke] = v_new[qs:qe]
+            else:
+                k_full[ks:ke] = k_new[qs:qe]
+                v_full[ks:ke] = v_new[qs:qe]
+
+        return self._prefill_varlen(q, k_full, v_full, context)
+
+    # ------------------------------------------------------------------
+    # Paged decode – read from page table, never pad
+    # ------------------------------------------------------------------
+
+    def _decode_paged(self, q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
         bs = q.size(0)
         block_size = k_cache.size(1)
-        num_kv_heads = k_cache.size(2)
-        head_dim = k_cache.size(3)
-        block_tables = context.block_tables
-        context_lens = context.context_lens
-        max_blocks = block_tables.size(1)
-        max_len = max_blocks * block_size
+        assert self.head_dim in (64, 128, 256)
 
-        bt_safe = block_tables.clamp(min=0)
-        k = k_cache[bt_safe].reshape(bs, max_len, num_kv_heads, head_dim)
-        v = v_cache[bt_safe].reshape(bs, max_len, num_kv_heads, head_dim)
+        o = torch.empty_like(q)
 
-        pos = torch.arange(max_len, device=q.device, dtype=context_lens.dtype)
-        valid = pos.unsqueeze(0) < context_lens.unsqueeze(1)    # (bs, max_len)
-        attn_mask = valid.view(bs, 1, 1, max_len)
-
-        q_ = q.unsqueeze(-2)             # (bs, H, 1, D)
-        k_ = k.transpose(1, 2)           # (bs, Hkv, max_len, D)
-        v_ = v.transpose(1, 2)
-        out = F.scaled_dot_product_attention(
-            q_, k_, v_,
-            attn_mask=attn_mask,
-            scale=self.scale,
-            enable_gqa=self.enable_gqa,
+        grid = (bs, self.num_heads)
+        _decode_paged_kernel[grid](
+            q, k_cache, v_cache, o,
+            context.block_tables, context.context_lens,
+            self.scale,
+            q.stride(0), q.stride(1), q.stride(2),
+            k_cache.stride(0), k_cache.stride(1), k_cache.stride(2), k_cache.stride(3),
+            v_cache.stride(0), v_cache.stride(1), v_cache.stride(2), v_cache.stride(3),
+            context.block_tables.stride(0),
+            o.stride(0), o.stride(1), o.stride(2),
+            BLOCK_KV=64,
+            BLOCK_SIZE=block_size,
+            D=self.head_dim,
+            N_HEADS=self.num_heads,
+            N_KV_HEADS=self.num_kv_heads,
         )
-        return out.squeeze(-2)           # (bs, H, D)
+        return o
