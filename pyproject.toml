@@ -14,8 +14,15 @@ dependencies = [
     "torch>=2.4.0",
     "triton>=3.0.0",
     "transformers>=4.51.0",
+    "numpy",
+    "safetensors",
+    "tqdm",
     "xxhash",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+serve = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 
 [project.urls]
 Homepage="https://github.com/jiamumuzhao/nano-vllm"
@@ -23,3 +30,7 @@ Homepage="https://github.com/jiamumuzhao/nano-vllm"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["nanovllm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["gpu: requires a CUDA-capable PyTorch installation"]

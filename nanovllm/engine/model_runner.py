@@ -25,9 +25,10 @@ class ModelRunner:
 
         dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
         model_dtype = hf_config.torch_dtype if config.dtype == "auto" else dtype_map[config.dtype]
-        self.model_dtype = model_dtype
 
         torch.cuda.set_device(rank)
+        self.model_dtype = model_dtype
+
         dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank, device_id=rank)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(model_dtype)
@@ -175,36 +176,47 @@ class ModelRunner:
         return input_ids, positions
 
     def prepare_decode(self, seqs: list[Sequence]):
+        bs = len(seqs)
         input_ids = []
         positions = []
         slot_mapping = []
         context_lens = []
+        block_table_rows = []
         for seq in seqs:
             input_ids.append(seq.last_token)
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
-            slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens  - 1)
-            '''
-            if is_prefill and seq.num_cached_tokens < seq.num_tokens:
-                continue
-            seq.append_token(token_id)
-            
-            def append_token(self, token_id: int):
-                self.token_ids.append(token_id)
-                self.last_token = token_id
-                self.num_tokens += 1
-            
-            @property
-            def last_block_num_tokens(self):
-                return self.num_tokens - (self.num_blocks - 1) * self.block_size
-            '''
+            slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1)
+            block_table_rows.append(tuple(seq.block_table))
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        block_tables = self.prepare_block_tables(seqs)
+        block_tables = block_table_rows if not self.enforce_eager and bs <= 512 else self.prepare_block_tables(seqs)
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
         return input_ids, positions
+
+    def update_graph_block_tables(self, block_table_rows: list[tuple[int, ...]], graph_vars: dict):
+        max_rows = len(block_table_rows)
+        for row_idx, row in enumerate(block_table_rows):
+            if self.graph_block_table_cache[row_idx] == row:
+                continue
+            old_len = self.graph_block_table_lengths[row_idx]
+            row_len = len(row)
+            if old_len > row_len:
+                graph_vars["block_tables"][row_idx, row_len:old_len].fill_(-1)
+            if row_len:
+                values = torch.tensor(row, dtype=torch.int32, device="cuda")
+                graph_vars["block_tables"][row_idx, :row_len] = values
+            self.graph_block_table_cache[row_idx] = row
+            self.graph_block_table_lengths[row_idx] = row_len
+        for row_idx in range(max_rows, self.graph_block_table_active_rows):
+            old_len = self.graph_block_table_lengths[row_idx]
+            if old_len:
+                graph_vars["block_tables"][row_idx, :old_len].fill_(-1)
+                self.graph_block_table_cache[row_idx] = None
+                self.graph_block_table_lengths[row_idx] = 0
+        self.graph_block_table_active_rows = max_rows
 
     def prepare_sample(self, seqs: list[Sequence]):
         temperatures = [seq.temperature for seq in seqs]
@@ -220,13 +232,16 @@ class ModelRunner:
             context = get_context()
             graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]
             graph_vars = self.graph_vars
-            graph_vars["input_ids"][:bs] = input_ids
-            graph_vars["positions"][:bs] = positions
+            graph_vars["input_ids"][:bs].copy_(input_ids, non_blocking=True)
+            graph_vars["positions"][:bs].copy_(positions, non_blocking=True)
             graph_vars["slot_mapping"].fill_(-1)
-            graph_vars["slot_mapping"][:bs] = context.slot_mapping
+            graph_vars["slot_mapping"][:bs].copy_(context.slot_mapping, non_blocking=True)
             graph_vars["context_lens"].zero_()
-            graph_vars["context_lens"][:bs] = context.context_lens
-            graph_vars["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
+            graph_vars["context_lens"][:bs].copy_(context.context_lens, non_blocking=True)
+            if isinstance(context.block_tables, list):
+                self.update_graph_block_tables(context.block_tables, graph_vars)
+            else:
+                graph_vars["block_tables"][:bs, :context.block_tables.size(1)].copy_(context.block_tables, non_blocking=True)
             graph.replay()
             return self.model.compute_logits(graph_vars["outputs"][:bs])
 
@@ -253,6 +268,9 @@ class ModelRunner:
         self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
         self.graphs = {}
         self.graph_pool = None
+        self.graph_block_table_cache = [None] * max_bs
+        self.graph_block_table_lengths = [0] * max_bs
+        self.graph_block_table_active_rows = 0
 
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()

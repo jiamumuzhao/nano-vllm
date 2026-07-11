@@ -145,9 +145,102 @@ def _varlen_prefill_kernel(
 
 
 # ---------------------------------------------------------------------------
-# Paged decode: one (batch, head) program reads KV from page tables and
-# only touches valid blocks.
+# Paged prefill/decode kernels read KV from page tables and only touch valid
+# logical tokens.
 # ---------------------------------------------------------------------------
+
+@triton.jit
+def _paged_prefill_kernel(
+    q_ptr, k_cache_ptr, v_cache_ptr, o_ptr,
+    cu_seqlens_q_ptr, cu_seqlens_k_ptr, block_tables_ptr,
+    scale,
+    stride_q_t, stride_q_h, stride_q_d,
+    stride_kc_blk, stride_kc_t, stride_kc_h, stride_kc_d,
+    stride_vc_blk, stride_vc_t, stride_vc_h, stride_vc_d,
+    stride_bt_b,
+    stride_o_t, stride_o_h, stride_o_d,
+    BLOCK_Q: tl.constexpr,
+    BLOCK_KV: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    D: tl.constexpr,
+    N_HEADS: tl.constexpr,
+    N_KV_HEADS: tl.constexpr,
+):
+    seq_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+
+    seq_q_start = tl.load(cu_seqlens_q_ptr + seq_id)
+    seq_q_end = tl.load(cu_seqlens_q_ptr + seq_id + 1)
+    seq_k_start = tl.load(cu_seqlens_k_ptr + seq_id)
+    seq_k_end = tl.load(cu_seqlens_k_ptr + seq_id + 1)
+
+    seq_q_len = seq_q_end - seq_q_start
+    seq_k_len = seq_k_end - seq_k_start
+    prefix_len = seq_k_len - seq_q_len
+
+    if N_HEADS == N_KV_HEADS:
+        kv_head_id = head_id
+    else:
+        kv_head_id = head_id // (N_HEADS // N_KV_HEADS)
+
+    offs_d = tl.arange(0, D)
+
+    for q_start in range(seq_q_start, seq_q_end, BLOCK_Q):
+        offs_q = q_start + tl.arange(0, BLOCK_Q)
+        q_mask = offs_q < seq_q_end
+        q = tl.load(
+            q_ptr + offs_q[:, None] * stride_q_t + head_id * stride_q_h + offs_d[None, :] * stride_q_d,
+            mask=q_mask[:, None],
+            other=0.0,
+        )
+
+        m_i = tl.full([BLOCK_Q], float("-inf"), dtype=tl.float32)
+        l_i = tl.zeros([BLOCK_Q], dtype=tl.float32)
+        acc = tl.zeros([BLOCK_Q, D], dtype=tl.float32)
+
+        for kv_start in range(0, seq_k_len, BLOCK_KV):
+            offs_kv = kv_start + tl.arange(0, BLOCK_KV)
+            kv_mask = offs_kv < seq_k_len
+            block_idx = offs_kv // BLOCK_SIZE
+            block_offset = offs_kv - block_idx * BLOCK_SIZE
+            block_id = tl.load(
+                block_tables_ptr + seq_id * stride_bt_b + block_idx,
+                mask=kv_mask,
+                other=0,
+            )
+
+            k = tl.load(
+                k_cache_ptr + block_id[:, None] * stride_kc_blk + block_offset[:, None] * stride_kc_t + kv_head_id * stride_kc_h + offs_d[None, :] * stride_kc_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+            v = tl.load(
+                v_cache_ptr + block_id[:, None] * stride_vc_blk + block_offset[:, None] * stride_vc_t + kv_head_id * stride_vc_h + offs_d[None, :] * stride_vc_d,
+                mask=kv_mask[:, None],
+                other=0.0,
+            )
+
+            scores = tl.dot(q, tl.trans(k)) * scale
+            q_local = offs_q - seq_q_start
+            causal_mask = offs_kv[None, :] <= q_local[:, None] + prefix_len
+            valid_mask = q_mask[:, None] & kv_mask[None, :]
+            scores = tl.where(valid_mask & causal_mask, scores, float("-inf"))
+
+            m_new = tl.maximum(m_i, tl.max(scores, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.exp(scores - m_new[:, None])
+
+            l_i = l_i * alpha + tl.sum(p, 1)
+            acc = acc * alpha[:, None] + tl.dot(p.to(tl.float16), v)
+            m_i = m_new
+
+        o = acc / l_i[:, None]
+        tl.store(
+            o_ptr + offs_q[:, None] * stride_o_t + head_id * stride_o_h + offs_d[None, :] * stride_o_d,
+            o.to(o_ptr.dtype.element_ty),
+            mask=q_mask[:, None],
+        )
+
 
 @triton.jit
 def _decode_paged_kernel(
@@ -300,38 +393,42 @@ class Attention(nn.Module):
         return o
 
     # ------------------------------------------------------------------
-    # Paged prefill (prefix cache) — assemble full K/V then varlen
+    # Paged prefill (prefix cache) -- read full K/V directly from KV cache.
     # ------------------------------------------------------------------
 
     def _prefill_paged(self, q: torch.Tensor, k_new: torch.Tensor, v_new: torch.Tensor,
                        k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
-        cu_q, cu_k = context.cu_seqlens_q, context.cu_seqlens_k
         block_size = k_cache.size(1)
-        batch_size = cu_q.numel() - 1
-
-        total_k_len = cu_k[-1].item()
-
-        k_full = torch.empty(total_k_len, *k_new.shape[1:], dtype=k_new.dtype, device=k_new.device)
-        v_full = torch.empty(total_k_len, *v_new.shape[1:], dtype=v_new.dtype, device=v_new.device)
-        block_tables = context.block_tables
-
-        for i in range(batch_size):
-            ks = int(cu_k[i]); ke = int(cu_k[i + 1])
-            qs = int(cu_q[i]); qe = int(cu_q[i + 1])
-            prefix_len = (ke - ks) - (qe - qs)      # = cached tokens
-
-            if prefix_len > 0:
-                nblk = (prefix_len + block_size - 1) // block_size
-                bt = block_tables[i, :nblk].clamp(min=0)
-                k_full[ks:ks + prefix_len] = k_cache[bt].reshape(-1, *k_new.shape[1:])[:prefix_len]
-                v_full[ks:ks + prefix_len] = v_cache[bt].reshape(-1, *v_new.shape[1:])[:prefix_len]
-                k_full[ks + prefix_len:ke] = k_new[qs:qe]
-                v_full[ks + prefix_len:ke] = v_new[qs:qe]
-            else:
-                k_full[ks:ke] = k_new[qs:qe]
-                v_full[ks:ke] = v_new[qs:qe]
-
-        return self._prefill_varlen(q, k_full, v_full, context)
+        assert self.head_dim in (64, 128, 256)
+        assert context.block_tables is not None
+        o = torch.empty_like(q)
+        batch_size = context.cu_seqlens_q.numel() - 1
+        grid = (batch_size, self.num_heads)
+        max_seqlen_q = context.max_seqlen_q or q.size(0)
+        if max_seqlen_q <= 1:
+            block_q, block_kv, num_warps = 1, 64, 4
+        elif max_seqlen_q <= 16:
+            block_q, block_kv, num_warps = 16, 64, 4
+        else:
+            block_q, block_kv, num_warps = 32, 64, 4
+        _paged_prefill_kernel[grid](
+            q, k_cache, v_cache, o,
+            context.cu_seqlens_q, context.cu_seqlens_k, context.block_tables,
+            self.scale,
+            q.stride(0), q.stride(1), q.stride(2),
+            k_cache.stride(0), k_cache.stride(1), k_cache.stride(2), k_cache.stride(3),
+            v_cache.stride(0), v_cache.stride(1), v_cache.stride(2), v_cache.stride(3),
+            context.block_tables.stride(0),
+            o.stride(0), o.stride(1), o.stride(2),
+            BLOCK_Q=block_q,
+            BLOCK_KV=block_kv,
+            BLOCK_SIZE=block_size,
+            D=self.head_dim,
+            N_HEADS=self.num_heads,
+            N_KV_HEADS=self.num_kv_heads,
+            num_warps=num_warps,
+        )
+        return o
 
     # ------------------------------------------------------------------
     # Paged decode – read from page table, never pad

@@ -21,6 +21,7 @@ class LLMEngine:
         Sequence.block_size = config.kvcache_block_size
         self.ps = []
         self.events = []
+        self._exited = False
         ctx = mp.get_context("spawn")
         for i in range(1, config.tensor_parallel_size):
             event = ctx.Event()
@@ -35,8 +36,12 @@ class LLMEngine:
         atexit.register(self.exit)
 
     def exit(self):
-        self.model_runner.call("exit")
-        del self.model_runner
+        if self._exited:
+            return
+        self._exited = True
+        if hasattr(self, "model_runner"):
+            self.model_runner.call("exit")
+            del self.model_runner
         for p in self.ps:
             p.join()
 
@@ -45,14 +50,19 @@ class LLMEngine:
             prompt = self.tokenizer.encode(prompt)
         seq = Sequence(prompt, sampling_params)
         self.scheduler.add(seq)
+        return seq.seq_id
 
     def step(self):
+        outputs, num_tokens, _ = self.step_with_events()
+        return outputs, num_tokens
+
+    def step_with_events(self):
         seqs, is_prefill = self.scheduler.schedule()
         num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
         token_ids = self.model_runner.call("run", seqs, is_prefill)
-        self.scheduler.postprocess(seqs, token_ids, is_prefill)
+        token_events = self.scheduler.postprocess(seqs, token_ids, is_prefill)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
-        return outputs, num_tokens
+        return outputs, num_tokens, token_events
 
     def is_finished(self):
         return self.scheduler.is_finished()

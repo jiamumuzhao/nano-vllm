@@ -27,29 +27,38 @@ class Scheduler:
         num_batched_tokens = 0
 
         # prefill
-        while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
-            seq = self.waiting[0]
+        # Scan each waiting sequence at most once per scheduling step. This lets
+        # long prompts make progress without monopolizing the full token budget.
+        num_waiting = len(self.waiting)
+        while self.waiting and num_waiting and len(scheduled_seqs) < self.max_num_seqs:
             remaining = self.max_num_batched_tokens - num_batched_tokens
             if remaining == 0:
                 break
+
+            seq_slots = min(num_waiting, self.max_num_seqs - len(scheduled_seqs))
+            token_budget = max(1, remaining // seq_slots)
+            seq = self.waiting.popleft()
+            num_waiting -= 1
+
             if not seq.block_table:
                 num_cached_blocks = self.block_manager.can_allocate(seq)
                 if num_cached_blocks == -1:
-                    break
+                    self.waiting.append(seq)
+                    continue
                 num_tokens = seq.num_tokens - num_cached_blocks * self.block_size
+                self.block_manager.allocate(seq, num_cached_blocks)
             else:
                 num_tokens = seq.num_tokens - seq.num_cached_tokens
-            if remaining < num_tokens and scheduled_seqs:  # only allow chunked prefill for the first seq
-                break
-            if not seq.block_table:
-                self.block_manager.allocate(seq, num_cached_blocks)
-            seq.num_scheduled_tokens = min(num_tokens, remaining)
+
+            seq.num_scheduled_tokens = min(num_tokens, token_budget)
             num_batched_tokens += seq.num_scheduled_tokens
+            scheduled_seqs.append(seq)
+
             if seq.num_cached_tokens + seq.num_scheduled_tokens == seq.num_tokens:
                 seq.status = SequenceStatus.RUNNING
-                self.waiting.popleft()
                 self.running.append(seq)
-            scheduled_seqs.append(seq)
+            else:
+                self.waiting.append(seq)
 
         if scheduled_seqs:
             return scheduled_seqs, True
@@ -79,6 +88,7 @@ class Scheduler:
         self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
+        token_events = []
         for seq, token_id in zip(seqs, token_ids):
             self.block_manager.hash_blocks(seq)
             seq.num_cached_tokens += seq.num_scheduled_tokens
@@ -88,8 +98,11 @@ class Scheduler:
             if is_prefill and seq.num_cached_tokens < seq.num_tokens:
                 continue
             seq.append_token(token_id)
-            if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
+            finished = (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens
+            token_events.append((seq.seq_id, token_id, finished))
+            if finished:
                 # print(f"Sequence {seq.seq_id} finished with reason: {'EOS' if token_id == self.eos else 'max_tokens'}")
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
+        return token_events
