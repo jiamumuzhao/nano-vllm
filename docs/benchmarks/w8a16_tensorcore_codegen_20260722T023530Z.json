@@ -1,0 +1,29 @@
+{
+  "timestamp_utc": "2026-07-22T02:35:30.213157+00:00",
+  "status": "passed",
+  "kernel_path": "cuda_fp16_tensorcore_wmma",
+  "extension_build": "present",
+  "extension_path": "/root/workspace/nano-vllm/nanovllm/kernels/_w8a16_tensorcore.cpython-313-x86_64-linux-gnu.so",
+  "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T023530Z_files/w8a16_tensorcore.ptx",
+  "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T023530Z_files/w8a16_tensorcore.sass",
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "sass_contains_hmma": true,
+  "sass_hmma_signatures": [
+    "HMMA.1688.F32"
+  ],
+  "runtime_path": "cuda_fp16_tensorcore_wmma",
+  "compiler_error": null,
+  "run_error": null,
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "nvcc_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Mon_Mar_02_09:52:23_PM_PST_2026\nCuda compilation tools, release 13.2, V13.2.51\nBuild cuda_13.2.r13.2/compiler.37434383_0"
+}

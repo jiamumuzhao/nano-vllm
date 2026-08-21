@@ -8,10 +8,17 @@ def apply_rotary_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
-    x1, x2 = torch.chunk(x.float(), 2, dim=-1)
-    y1 = x1 * cos - x2 * sin
-    y2 = x2 * cos + x1 * sin
-    return torch.cat((y1, y2), dim=-1).to(x.dtype)
+    # Qwen3/Transformers performs the rotary multiply in the activation dtype
+    # after casting cos/sin to that dtype. Keeping the FP16 path here avoids a
+    # silent FP32-vs-FP16 implementation difference in model-level alignment.
+    # Match Transformers' Qwen3 implementation literally:
+    # x * [cos, cos] + rotate_half(x) * [sin, sin].  The algebraically
+    # equivalent two-half expression has a different FP16 rounding boundary.
+    cos = torch.cat((cos, cos), dim=-1)
+    sin = torch.cat((sin, sin), dim=-1)
+    x1, x2 = torch.chunk(x, 2, dim=-1)
+    rotated = torch.cat((-x2, x1), dim=-1)
+    return (x * cos + rotated * sin).to(x.dtype)
 
 
 class RotaryEmbedding(nn.Module):
@@ -34,7 +41,6 @@ class RotaryEmbedding(nn.Module):
         cache = torch.cat((cos, sin), dim=-1).unsqueeze_(1)
         self.register_buffer("cos_sin_cache", cache, persistent=False)
 
-    @torch.compile
     def forward(
         self,
         positions: torch.Tensor,
@@ -43,6 +49,8 @@ class RotaryEmbedding(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         cos_sin = self.cos_sin_cache[positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
+        cos = cos.to(query.dtype)
+        sin = sin.to(query.dtype)
         query = apply_rotary_emb(query, cos, sin)
         key = apply_rotary_emb(key, cos, sin)
         return query, key

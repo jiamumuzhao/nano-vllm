@@ -1,0 +1,27 @@
+{
+  "timestamp_utc": "2026-07-22T02:08:37.636557+00:00",
+  "status": "error",
+  "kernel_path": "unsupported",
+  "extension_build": "present",
+  "extension_path": "/root/workspace/nano-vllm/nanovllm/kernels/_w8a16_tensorcore.cpython-313-x86_64-linux-gnu.so",
+  "ptx_path": null,
+  "sass_path": null,
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "sass_contains_hmma": false,
+  "sass_hmma_signatures": [],
+  "runtime_path": null,
+  "compiler_error": "ModuleNotFoundError: No module named 'nanovllm'",
+  "run_error": null,
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "nvcc_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Mon_Mar_02_09:52:23_PM_PST_2026\nCuda compilation tools, release 13.2, V13.2.51\nBuild cuda_13.2.r13.2/compiler.37434383_0"
+}

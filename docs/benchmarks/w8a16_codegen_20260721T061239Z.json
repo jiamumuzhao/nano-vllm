@@ -1,0 +1,24 @@
+{
+  "timestamp_utc": "2026-07-21T06:12:39.628446+00:00",
+  "status": "error",
+  "kernel_path": "unsupported",
+  "ptx_paths": [],
+  "ptx_path": null,
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "ptx_contains_fma_rn_f32": false,
+  "sass_paths": [],
+  "sass_contains_hmma": false,
+  "compiler_error": "ModuleNotFoundError: No module named 'nanovllm'",
+  "run_error": null,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1
+}

@@ -1,0 +1,54 @@
+{
+  "timestamp_utc": "2026-07-22T08:51:19.731838+00:00",
+  "status": "passed",
+  "kernel_path": "int8_mma_verified",
+  "extension_build": "present",
+  "extension_path": "/root/workspace/nano-vllm/nanovllm/kernels/_w8a8_tensorcore.cpython-313-x86_64-linux-gnu.so",
+  "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.ptx",
+  "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.sass",
+  "sass_contains_imma": true,
+  "ptx_contains_int8_mma": false,
+  "path_results": {
+    "m1_n1024_legacy": {
+      "shape": {
+        "M": 1,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_int8_mma",
+      "status": "passed",
+      "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.sass",
+      "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.ptx",
+      "sass_contains_imma": true,
+      "ptx_contains_int8_mma": false
+    },
+    "m16_n4096_cta": {
+      "shape": {
+        "M": 16,
+        "N": 4096,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_int8_mma_cta",
+      "status": "passed",
+      "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.sass",
+      "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a8_tensorcore_codegen_20260722T085119Z_files/w8a8_tensorcore.ptx",
+      "sass_contains_imma": true,
+      "ptx_contains_int8_mma": false
+    }
+  },
+  "compiler_error": null,
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "nvcc_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Mon_Mar_02_09:52:23_PM_PST_2026\nCuda compilation tools, release 13.2, V13.2.51\nBuild cuda_13.2.r13.2/compiler.37434383_0\n",
+  "sass_imma_signatures": [
+    "IMMA.8816.S8.S8"
+  ]
+}

@@ -1,0 +1,393 @@
+{
+  "timestamp_utc": "2026-07-23T09:02:17.365884+00:00",
+  "status": "passed",
+  "verification": "cublaslt_api_verified",
+  "custom_extension_sass_claim": false,
+  "gpu": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "cuda": "13.0",
+  "pytorch": "2.11.0+cu130",
+  "python": "3.13.9",
+  "cublaslt_version": null,
+  "extension": "nanovllm.kernels._w8a8_cublaslt",
+  "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+  "shapes": [
+    {
+      "shape": {
+        "M": 32,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "selected_metadata": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": 0.022975999861955643,
+        "budget_bytes": 4194304,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I"
+      },
+      "baseline_row_major": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": null,
+        "budget_bytes": 67108864,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I"
+      },
+      "candidate_count": 5,
+      "candidates": [
+        {
+          "layout": "row_major",
+          "budget_bytes": 0,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.02457600086927414
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 1048576,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.02300800010561943
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 4194304,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.022975999861955643
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 16777216,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.023840000852942467
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 67108864,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.023231999948620796
+        }
+      ],
+      "layout_results": {
+        "row_major": {
+          "status": "passed",
+          "candidates": [
+            {
+              "layout": "row_major",
+              "budget_bytes": 0,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.02457600086927414
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 1048576,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.02300800010561943
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 4194304,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.022975999861955643
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 16777216,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.023840000852942467
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 67108864,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.023231999948620796
+            }
+          ]
+        },
+        "col32": {
+          "status": "skipped",
+          "reason": "CUBLASLT_ORDER_COL32 transform/packed-buffer path is not validated for this SM75 extension; row-major candidates retained",
+          "candidates": []
+        }
+      },
+      "selected_layout": "row_major",
+      "selected_algorithm": "heuristic_index_0",
+      "workspace_data_ptr_stable": true,
+      "normal_reuse_ptr_stable": true,
+      "mismatch_weight_rejected": true,
+      "inplace_mutated_weight_rejected": true,
+      "bound_weight_identity_fields": [
+        "data_ptr",
+        "shape",
+        "dtype",
+        "device",
+        "version"
+      ],
+      "reprepare_after_rejection_succeeded": true
+    },
+    {
+      "shape": {
+        "M": 256,
+        "N": 4096,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "selected_metadata": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": 0.10543999820947647,
+        "budget_bytes": 16777216,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I"
+      },
+      "baseline_row_major": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": null,
+        "budget_bytes": 67108864,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I"
+      },
+      "candidate_count": 5,
+      "candidates": [
+        {
+          "layout": "row_major",
+          "budget_bytes": 0,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10662399977445602
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 1048576,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10649599879980087
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 4194304,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10627199709415436
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 16777216,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10543999820947647
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 67108864,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10585600137710571
+        }
+      ],
+      "layout_results": {
+        "row_major": {
+          "status": "passed",
+          "candidates": [
+            {
+              "layout": "row_major",
+              "budget_bytes": 0,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10662399977445602
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 1048576,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10649599879980087
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 4194304,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10627199709415436
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 16777216,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10543999820947647
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 67108864,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10585600137710571
+            }
+          ]
+        },
+        "col32": {
+          "status": "skipped",
+          "reason": "CUBLASLT_ORDER_COL32 transform/packed-buffer path is not validated for this SM75 extension; row-major candidates retained",
+          "candidates": []
+        }
+      },
+      "selected_layout": "row_major",
+      "selected_algorithm": "heuristic_index_0",
+      "workspace_data_ptr_stable": true,
+      "normal_reuse_ptr_stable": true,
+      "mismatch_weight_rejected": true,
+      "inplace_mutated_weight_rejected": true,
+      "bound_weight_identity_fields": [
+        "data_ptr",
+        "shape",
+        "dtype",
+        "device",
+        "version"
+      ],
+      "reprepare_after_rejection_succeeded": true
+    }
+  ]
+}

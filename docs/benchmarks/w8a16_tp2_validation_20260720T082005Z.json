@@ -1,0 +1,44 @@
+{
+  "timestamp_utc": "2026-07-20T08:20:05.473100+00:00",
+  "command": "NANOVLLM_RUN_TP2=1 CUDA_VISIBLE_DEVICES=0,1 /opt/anaconda3/bin/python -m pytest -q -s tests/test_w8a16_tp.py",
+  "exit_code": 0,
+  "status": "passed",
+  "duration_seconds": 12.424975496949628,
+  "environment": {
+    "cuda_visible_devices": "0,1",
+    "gpu_count": 2,
+    "gpus": [
+      {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "memory_bytes": 11337531392,
+        "memory_gib": 10.55889892578125
+      },
+      {
+        "index": 1,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "memory_bytes": 11347623936,
+        "memory_gib": 10.56829833984375
+      }
+    ],
+    "python_version": "3.13.9",
+    "pytorch_version": "2.11.0+cu130",
+    "cuda_version": "13.0",
+    "triton_version": "3.6.0",
+    "nccl_version": [
+      2,
+      28,
+      9
+    ],
+    "git_commit": "5fc5453e1245fbd31f3906ca6a618f8276690c1b",
+    "dirty_worktree": true
+  },
+  "test_scope": [
+    "QKV GQA",
+    "MergedColumnParallel",
+    "RowParallel bias/all-reduce",
+    "local shard scale"
+  ],
+  "stdout": "[w8a16-tp2 rank=0] initializing NCCL\n[w8a16-tp2 rank=1] initializing NCCL\n[w8a16-tp2 rank=0] NCCL initialized\n[w8a16-tp2 rank=1] NCCL initialized\n[w8a16-tp2 rank=1] QKV completed\n[w8a16-tp2 rank=1] Merged completed\n[w8a16-tp2 rank=0] QKV completed\n[w8a16-tp2 rank=0] Merged completed\n[w8a16-tp2 rank=0] RowParallel completed\n[w8a16-tp2 rank=0] normal completion barrier\n[w8a16-tp2 rank=1] RowParallel completed\n[w8a16-tp2 rank=1] normal completion barrier\n[w8a16-tp2 rank=1] normal barrier completed\n[w8a16-tp2 rank=0] normal barrier completed\n[w8a16-tp2 rank=1] process group destroyed\n[w8a16-tp2 rank=0] process group destroyed\n[w8a16-tp2 parent] all NCCL stages passed; reaping residual runtime processes=[(615532, True, None), (615533, False, 0)]\n.\n=============================== warnings summary ===============================\n<frozen importlib._bootstrap>:488\n  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute\n\n<frozen importlib._bootstrap>:488\n  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute\n\n../../../opt/anaconda3/lib/python3.13/site-packages/torch/jit/_script.py:365: 14 warnings\n  /opt/anaconda3/lib/python3.13/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1 passed, 16 warnings in 10.64s\n",
+  "stderr": "[W720 08:20:15.328352605 Utils.hpp:166] Warning: Environment variable NCCL_BLOCKING_WAIT is deprecated; use TORCH_NCCL_BLOCKING_WAIT instead (function operator())\n[W720 08:20:15.328362468 Utils.hpp:137] Warning: Environment variable NCCL_ASYNC_ERROR_HANDLING is deprecated; use TORCH_NCCL_ASYNC_ERROR_HANDLING instead (function operator())\n[W720 08:20:15.405334436 Utils.hpp:166] Warning: Environment variable NCCL_BLOCKING_WAIT is deprecated; use TORCH_NCCL_BLOCKING_WAIT instead (function operator())\n[W720 08:20:15.405342490 Utils.hpp:137] Warning: Environment variable NCCL_ASYNC_ERROR_HANDLING is deprecated; use TORCH_NCCL_ASYNC_ERROR_HANDLING instead (function operator())\n<sys>:0: DeprecationWarning: builtin type swigvarlink has no __module__ attribute\n"
+}

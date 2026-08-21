@@ -1,0 +1,54 @@
+{
+  "all_engines_have_10_runs": true,
+  "all_generated_tokens_fixed": true,
+  "all_outputs_fixed_length": true,
+  "dtype_identical": [
+    "float16"
+  ],
+  "expected_measured_seeds": [
+    11234,
+    11235,
+    11236,
+    11237,
+    11238,
+    11239,
+    11240,
+    11241,
+    11242,
+    11243
+  ],
+  "expected_run_record_counts": {
+    "hf": 10,
+    "nano_eager": 10,
+    "nano_graph": 10,
+    "vllm": 10
+  },
+  "max_num_batched_tokens": [
+    1024
+  ],
+  "max_num_seqs": [
+    8
+  ],
+  "passed": true,
+  "per_run_seeds_identical_across_engines": true,
+  "prompt_hashes": [
+    "a412c076e2a785e01d46fb9b53c33868832776b9930fc50d7b5ec325d8cc9de1"
+  ],
+  "run_record_counts": {
+    "hf": 10,
+    "nano_eager": 10,
+    "nano_graph": 10,
+    "vllm": 10
+  },
+  "summary_engines": [
+    "hf",
+    "nano_eager",
+    "nano_graph",
+    "vllm"
+  ],
+  "summary_measured_seeds_identical": true,
+  "temperature_identical": [
+    1.0
+  ],
+  "workloads_identical": true
+}

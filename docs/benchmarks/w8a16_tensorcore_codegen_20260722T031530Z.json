@@ -1,0 +1,67 @@
+{
+  "timestamp_utc": "2026-07-22T03:15:30.024222+00:00",
+  "status": "passed",
+  "kernel_path": "cuda_fp16_tensorcore_wmma",
+  "extension_build": "present",
+  "extension_path": "/root/workspace/nano-vllm/nanovllm/kernels/_w8a16_tensorcore.cpython-313-x86_64-linux-gnu.so",
+  "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.ptx",
+  "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.sass",
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "sass_contains_hmma": true,
+  "sass_hmma_signatures": [
+    "HMMA.1688.F32"
+  ],
+  "runtime_path": "decode+prefill",
+  "path_results": {
+    "decode_legacy": {
+      "shape": {
+        "M": 1,
+        "N": 128,
+        "K": 1024
+      },
+      "runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "codegen_status": "passed",
+      "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.sass",
+      "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.ptx",
+      "sass_contains_hmma": true
+    },
+    "prefill_legacy": {
+      "shape": {
+        "M": 64,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "cuda_fp16_tensorcore_wmma_prefill_legacy",
+      "codegen_status": "passed",
+      "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.sass",
+      "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.ptx",
+      "sass_contains_hmma": true
+    },
+    "prefill_cta": {
+      "shape": {
+        "M": 256,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "cuda_fp16_tensorcore_wmma_prefill_cta",
+      "codegen_status": "passed",
+      "sass_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.sass",
+      "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T031530Z_files/w8a16_tensorcore.ptx",
+      "sass_contains_hmma": true
+    }
+  },
+  "compiler_error": null,
+  "run_error": null,
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "nvcc_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Mon_Mar_02_09:52:23_PM_PST_2026\nCuda compilation tools, release 13.2, V13.2.51\nBuild cuda_13.2.r13.2/compiler.37434383_0"
+}

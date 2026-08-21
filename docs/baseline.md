@@ -25,7 +25,7 @@ cd /root/workspace/nano-vllm
 Current result:
 
 ```text
-4 passed, 16 warnings in 5.03s
+7 passed, 16 warnings in 5.11s
 ```
 
 Run the Hugging Face alignment check:
@@ -121,3 +121,5 @@ engine_decode_printed = about 1893.3 to 1900.2 tok/s after warmup
 - Use `/opt/anaconda3/bin/python`; `/usr/bin/python3` does not have the project test dependencies.
 - `benchmark_generate.py` sets `max_num_seqs` explicitly so CUDA Graph capture matches the measured workload instead of the default 512 sequence capacity.
 - JSON throughput is an end-to-end measurement around `llm.generate()`. The banner printed by the engine is the internal prefill/decode timing.
+
+Additional evidence boundaries and the future benchmark protocol are documented in [benchmark.md](benchmark.md).

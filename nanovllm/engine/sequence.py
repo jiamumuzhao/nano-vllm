@@ -6,9 +6,16 @@ from nanovllm.sampling_params import SamplingParams
 
 
 class SequenceStatus(Enum):
-    WAITING = auto()
-    RUNNING = auto()
+    QUEUED = auto()
+    PREFILL = auto()
+    DECODE = auto()
     FINISHED = auto()
+    CANCELLED = auto()
+    FAILED = auto()
+
+    # Compatibility aliases for the original scheduler terminology.
+    WAITING = QUEUED
+    RUNNING = DECODE
 
 
 class Sequence:
@@ -17,7 +24,9 @@ class Sequence:
 
     def __init__(self, token_ids: list[int], sampling_params = SamplingParams()):
         self.seq_id = next(Sequence.counter)
-        self.status = SequenceStatus.WAITING
+        self.status = SequenceStatus.QUEUED
+        self.finish_reason = None
+        self.error = None
         self.token_ids = copy(token_ids)
         self.last_token = token_ids[-1]
         self.num_tokens = len(self.token_ids)
@@ -39,6 +48,10 @@ class Sequence:
     @property
     def is_finished(self):
         return self.status == SequenceStatus.FINISHED
+
+    @property
+    def is_terminal(self):
+        return self.status in (SequenceStatus.FINISHED, SequenceStatus.CANCELLED, SequenceStatus.FAILED)
 
     @property
     def num_completion_tokens(self):
@@ -71,10 +84,19 @@ class Sequence:
 
     def __getstate__(self):
         last_state = self.last_token if not self.is_prefill else self.token_ids
-        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state)
+        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens,
+                self.block_table, last_state, self.status, self.finish_reason, self.error)
 
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
+        if len(state) == 6:
+            self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
+            self.status = SequenceStatus.QUEUED
+            self.finish_reason = None
+            self.error = None
+        else:
+            (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens,
+             self.num_scheduled_tokens, self.block_table, last_state,
+             self.status, self.finish_reason, self.error) = state
         if isinstance(last_state, list):
             self.token_ids = last_state
             self.last_token = self.token_ids[-1]

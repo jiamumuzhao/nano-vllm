@@ -1,0 +1,51 @@
+{
+  "timestamp_utc": "2026-07-23T06:35:52.747487+00:00",
+  "source_benchmark": "docs/benchmarks/w8a8_break_even_20260723T030044Z.json",
+  "source_timestamp_utc": "2026-07-23T03:00:44.690999+00:00",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 2080 Ti",
+    "compute_capability": [
+      7,
+      5
+    ],
+    "cuda": "13.0",
+    "pytorch": "2.11.0+cu130",
+    "python": "3.13.9"
+  },
+  "test_matrix": {
+    "M": [
+      1,
+      4,
+      16,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "N": [
+      1024,
+      4096
+    ],
+    "K": 1024
+  },
+  "integration_gate": {
+    "eligible_workloads": 0,
+    "operator_results_only": true,
+    "note": "W8A8 is not connected to ModelRunner; no model-e2e W8A8 conclusion is made."
+  },
+  "w8a8_eligible_shape_count": 0,
+  "production_routing_decision": {
+    "default_performance_route": "fp16",
+    "explicit_memory_route": "w8a16",
+    "w8a8_production_enabled": false
+  },
+  "conditions_to_reconsider_w8a8": [
+    "A reproducible benchmark must pass the existing W8A16/FP16 integration gate.",
+    "The passing result must be repeated on the target hardware and workload matrix.",
+    "A real model end-to-end validation must be completed after the operator result.",
+    "Only then may production routing be reconsidered; this record does not change runtime routing."
+  ]
+}

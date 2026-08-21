@@ -1,0 +1,28 @@
+{
+  "timestamp_utc": "2026-07-21T06:24:54.360163+00:00",
+  "status": "failed",
+  "kernel_path": "fp32_fma_fallback",
+  "ptx_paths": [
+    "/root/workspace/nano-vllm/docs/benchmarks/w8a16_codegen_20260721T062454Z_files/kernel_0.ptx"
+  ],
+  "ptx_path": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_codegen_20260721T062454Z_files/kernel_0.ptx",
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "ptx_contains_fma_rn_f32": true,
+  "sass_paths": [
+    "/tmp/nano-vllm-triton-cache-d9fe2e9m/QDEE5EU4QNX54JA3GHUYDI44S7LIKAIXKL77L2CKJ6ZXZ6VSV3IA/_w8a16_kernel.cubin"
+  ],
+  "sass_contains_hmma": false,
+  "compiler_error": null,
+  "run_error": null,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 2
+}

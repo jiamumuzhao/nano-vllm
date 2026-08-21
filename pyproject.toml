@@ -33,4 +33,8 @@ include = ["nanovllm*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["gpu: requires a CUDA-capable PyTorch installation"]
+markers = [
+    "gpu: requires a CUDA-capable PyTorch installation",
+    "e2e: engine-level end-to-end regression test",
+    "integration: requires an explicitly provisioned local integration environment",
+]

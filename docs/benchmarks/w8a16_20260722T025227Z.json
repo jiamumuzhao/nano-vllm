@@ -1,0 +1,121 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-07-22T02:52:27.028691+00:00",
+    "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+    "cuda_version": "13.0",
+    "pytorch_version": "2.11.0+cu130",
+    "triton_version": "3.6.0",
+    "model": "/root/huggingface/Qwen3-0.6B",
+    "dtype": "float16",
+    "tensor_parallel_size": 1,
+    "cuda_graph": "disabled",
+    "w8a16_kernel_implementation": "cuda_fp16_tensorcore_wmma",
+    "w8a16_codegen_evidence": "/root/workspace/nano-vllm/docs/benchmarks/w8a16_tensorcore_codegen_20260722T024958Z.json",
+    "w8a16_codegen_status": "passed"
+  },
+  "command": "scripts/benchmark_w8a16.py --batch-sizes 1 --input-lengths 128 --output-len 2 --warmup-runs 0 --repeats 1",
+  "parameters": {
+    "model": "/root/huggingface/Qwen3-0.6B",
+    "batch_sizes": [
+      1
+    ],
+    "input_lengths": [
+      128
+    ],
+    "output_len": 2,
+    "warmup_runs": 0,
+    "repeats": 1,
+    "seed": 1234,
+    "output_dir": "docs/benchmarks"
+  },
+  "results": [
+    {
+      "quantization": "none",
+      "batch_size": 1,
+      "input_len": 128,
+      "output_len": 2,
+      "status": "ok",
+      "load_memory_allocated_bytes": 4429780992,
+      "peak_memory_allocated_bytes": 4433979392,
+      "prefill_latency": {
+        "mean_ms": 876.3201900292188,
+        "p50_ms": 876.3201904296875,
+        "p95_ms": 876.3201904296875
+      },
+      "prefill_tok_s": {
+        "mean_ms": 146.0653325763636,
+        "p50_ms": 146.06533813476562,
+        "p95_ms": 146.06533813476562
+      },
+      "decode_step_latency": {
+        "mean_ms": 549.1278290282935,
+        "p50_ms": 549.1278076171875,
+        "p95_ms": 549.1278076171875
+      },
+      "decode_tok_s": {
+        "mean_ms": 3.642139214723629,
+        "p50_ms": 3.642139196395874,
+        "p95_ms": 3.642139196395874
+      },
+      "end_to_end_tok_s": {
+        "mean_ms": 1.4030613658120288,
+        "p50_ms": 1.4030613899230957,
+        "p95_ms": 1.4030613899230957
+      },
+      "raw_runs": [
+        {
+          "prefill_tokens": 128,
+          "prefill_ms": 876.3201900292188,
+          "prefill_tok_s": 146.0653325763636,
+          "decode_step_ms": 549.1278290282935,
+          "decode_tok_s": 3.642139214723629,
+          "end_to_end_tok_s": 1.4030613658120288
+        }
+      ]
+    },
+    {
+      "quantization": "w8a16",
+      "batch_size": 1,
+      "input_len": 128,
+      "output_len": 2,
+      "status": "ok",
+      "load_memory_allocated_bytes": 3804469248,
+      "peak_memory_allocated_bytes": 3808667648,
+      "prefill_latency": {
+        "mean_ms": 49.822673900052905,
+        "p50_ms": 49.82267379760742,
+        "p95_ms": 49.82267379760742
+      },
+      "prefill_tok_s": {
+        "mean_ms": 2569.111410133772,
+        "p50_ms": 2569.111328125,
+        "p95_ms": 2569.111328125
+      },
+      "decode_step_latency": {
+        "mean_ms": 32.17737702652812,
+        "p50_ms": 32.17737579345703,
+        "p95_ms": 32.17737579345703
+      },
+      "decode_tok_s": {
+        "mean_ms": 62.155470234604024,
+        "p50_ms": 62.15547180175781,
+        "p95_ms": 62.15547180175781
+      },
+      "end_to_end_tok_s": {
+        "mean_ms": 24.389157380507097,
+        "p50_ms": 24.389158248901367,
+        "p95_ms": 24.389158248901367
+      },
+      "raw_runs": [
+        {
+          "prefill_tokens": 128,
+          "prefill_ms": 49.822673900052905,
+          "prefill_tok_s": 2569.111410133772,
+          "decode_step_ms": 32.17737702652812,
+          "decode_tok_s": 62.155470234604024,
+          "end_to_end_tok_s": 24.389157380507097
+        }
+      ]
+    }
+  ]
+}

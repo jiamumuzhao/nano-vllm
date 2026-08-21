@@ -1,0 +1,94 @@
+{
+  "checks": [],
+  "engine_run_counts": {
+    "128x16:hf": 5,
+    "128x16:nano_eager": 5,
+    "128x16:nano_graph": 5,
+    "128x16:vllm": 5,
+    "128x1:hf": 5,
+    "128x1:nano_eager": 5,
+    "128x1:nano_graph": 5,
+    "128x1:vllm": 5,
+    "128x8:hf": 5,
+    "128x8:nano_eager": 5,
+    "128x8:nano_graph": 5,
+    "128x8:vllm": 5,
+    "2048x1:hf": 5,
+    "2048x1:nano_eager": 5,
+    "2048x1:nano_graph": 5,
+    "2048x1:vllm": 5,
+    "2048x8:hf": 5,
+    "2048x8:nano_eager": 5,
+    "2048x8:nano_graph": 5,
+    "2048x8:vllm": 5,
+    "512x16:hf": 5,
+    "512x16:nano_eager": 5,
+    "512x16:nano_graph": 5,
+    "512x16:vllm": 5,
+    "512x1:hf": 5,
+    "512x1:nano_eager": 5,
+    "512x1:nano_graph": 5,
+    "512x1:vllm": 5,
+    "512x8:hf": 5,
+    "512x8:nano_eager": 5,
+    "512x8:nano_graph": 5,
+    "512x8:vllm": 5
+  },
+  "expected_measured_seeds": [
+    11234,
+    11235,
+    11236,
+    11237,
+    11238
+  ],
+  "failed_or_incomplete_workloads": [
+    {
+      "failures": [
+        {
+          "engine": "hf",
+          "error_summary": "    ...<7 lines>...\n        **kwargs,\n        ^^^^^^^^^\n    )\n    ^\n  File \"/opt/anaconda3/lib/python3.13/site-packages/transformers/integrations/sdpa_attention.py\", line 92, in sdpa_attention_forward\n    attn_output = torch.nn.functional.scaled_dot_product_attention(\n        query,\n    ...<6 lines>...\n        **sdpa_kwargs,\n    )\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 4.00 GiB. GPU 0 has a total capacity of 10.56 GiB of which 3.49 GiB is free. Including non-PyTorch memory, this process has 7.06 GiB memory in use. Of the allocated memory 6.78 GiB is allocated by PyTorch, and 97.98 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)",
+          "phase": "preflight",
+          "stage": "worker_process"
+        }
+      ],
+      "formal_ok_engines": [],
+      "input_len": 2048,
+      "num_seqs": 16
+    }
+  ],
+  "passed": true,
+  "successful_formal_workloads": [
+    {
+      "input_len": 128,
+      "num_seqs": 1
+    },
+    {
+      "input_len": 128,
+      "num_seqs": 8
+    },
+    {
+      "input_len": 128,
+      "num_seqs": 16
+    },
+    {
+      "input_len": 512,
+      "num_seqs": 1
+    },
+    {
+      "input_len": 512,
+      "num_seqs": 8
+    },
+    {
+      "input_len": 512,
+      "num_seqs": 16
+    },
+    {
+      "input_len": 2048,
+      "num_seqs": 1
+    },
+    {
+      "input_len": 2048,
+      "num_seqs": 8
+    }
+  ]
+}

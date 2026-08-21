@@ -1,0 +1,483 @@
+{
+  "timestamp_utc": "2026-07-23T09:24:15.978841+00:00",
+  "status": "passed",
+  "verification": "cublaslt_api_verified",
+  "custom_extension_sass_claim": false,
+  "gpu": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "cuda": "13.0",
+  "pytorch": "2.11.0+cu130",
+  "python": "3.13.9",
+  "cublaslt_version": null,
+  "extension": "nanovllm.kernels._w8a8_cublaslt",
+  "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+  "shapes": [
+    {
+      "shape": {
+        "M": 32,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "selected_metadata": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": 0.023135999217629433,
+        "budget_bytes": 16777216,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I",
+        "layout_attempted": true,
+        "packed_buffer_ptr": 129840192684032,
+        "packed_buffer_bytes": 1048576,
+        "logical_shape": [
+          1024,
+          1024
+        ],
+        "physical_padded_shape": [
+          1024,
+          1024
+        ],
+        "leading_dimension": 1024,
+        "transform_status": "row_major",
+        "heuristic_candidate_count": 5
+      },
+      "baseline_row_major": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": null,
+        "budget_bytes": 67108864,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I",
+        "layout_attempted": true,
+        "packed_buffer_ptr": 129840189538304,
+        "packed_buffer_bytes": 1048576,
+        "logical_shape": [
+          1024,
+          1024
+        ],
+        "physical_padded_shape": [
+          1024,
+          1024
+        ],
+        "leading_dimension": 1024,
+        "transform_status": "row_major_baseline",
+        "heuristic_candidate_count": 1
+      },
+      "candidate_count": 5,
+      "candidates": [
+        {
+          "layout": "row_major",
+          "budget_bytes": 0,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.025631999596953392
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 1048576,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.024224000051617622
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 4194304,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.02393599972128868
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 16777216,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.023135999217629433
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 67108864,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.02396799996495247
+        }
+      ],
+      "layout_results": {
+        "row_major": {
+          "status": "passed",
+          "candidates": [
+            {
+              "layout": "row_major",
+              "budget_bytes": 0,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.025631999596953392
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 1048576,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.024224000051617622
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 4194304,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.02393599972128868
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 16777216,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.023135999217629433
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 67108864,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.02396799996495247
+            }
+          ]
+        },
+        "col32": {
+          "attempted": true,
+          "stage": "heuristic",
+          "status_code": 0,
+          "status": "failed",
+          "success": true,
+          "logical_shape": [
+            1024,
+            1024
+          ],
+          "physical_shape": [
+            1024,
+            1024
+          ],
+          "leading_dimension": 32768,
+          "padding_cols": 0,
+          "buffer_bytes": 1048576,
+          "layout": "CUBLASLT_ORDER_COL32",
+          "candidates": [],
+          "cuBLASLt_status": "CUBLAS_STATUS_SUCCESS",
+          "reason": "cublasLt heuristic returned zero valid COL32 candidates"
+        }
+      },
+      "selected_layout": "row_major",
+      "selected_algorithm": "heuristic_index_0",
+      "workspace_data_ptr_stable": true,
+      "normal_reuse_ptr_stable": true,
+      "mismatch_weight_rejected": true,
+      "inplace_mutated_weight_rejected": true,
+      "bound_weight_identity_fields": [
+        "data_ptr",
+        "shape",
+        "dtype",
+        "device",
+        "version"
+      ],
+      "reprepare_after_rejection_succeeded": true
+    },
+    {
+      "shape": {
+        "M": 256,
+        "N": 4096,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "selected_metadata": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": 0.1053759977221489,
+        "budget_bytes": 16777216,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I",
+        "layout_attempted": true,
+        "packed_buffer_ptr": 129840334241792,
+        "packed_buffer_bytes": 4194304,
+        "logical_shape": [
+          1024,
+          4096
+        ],
+        "physical_padded_shape": [
+          1024,
+          4096
+        ],
+        "leading_dimension": 4096,
+        "transform_status": "row_major",
+        "heuristic_candidate_count": 5
+      },
+      "baseline_row_major": {
+        "layout": "row_major",
+        "algorithm": "heuristic_index_0",
+        "heuristic_index": 0,
+        "returned_count": 1,
+        "waves_count": -1.0,
+        "workspace_bytes": 0,
+        "p50_ms": null,
+        "budget_bytes": 67108864,
+        "compute_type": "CUBLAS_COMPUTE_32I",
+        "A_dtype": "CUDA_R_8I",
+        "B_dtype": "CUDA_R_8I",
+        "C_dtype": "CUDA_R_32I",
+        "D_dtype": "CUDA_R_32I",
+        "layout_attempted": true,
+        "packed_buffer_ptr": 129840321658880,
+        "packed_buffer_bytes": 4194304,
+        "logical_shape": [
+          1024,
+          4096
+        ],
+        "physical_padded_shape": [
+          1024,
+          4096
+        ],
+        "leading_dimension": 4096,
+        "transform_status": "row_major_baseline",
+        "heuristic_candidate_count": 1
+      },
+      "candidate_count": 5,
+      "candidates": [
+        {
+          "layout": "row_major",
+          "budget_bytes": 0,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10755199939012527
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 1048576,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10665600001811981
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 4194304,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.1069440022110939
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 16777216,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.1053759977221489
+        },
+        {
+          "layout": "row_major",
+          "budget_bytes": 67108864,
+          "algorithm": "heuristic_index_0",
+          "heuristic_index": 0,
+          "returned_count": 1,
+          "waves_count": -1.0,
+          "workspace_bytes": 0,
+          "status": "passed",
+          "p50_ms": 0.10649599879980087
+        }
+      ],
+      "layout_results": {
+        "row_major": {
+          "status": "passed",
+          "candidates": [
+            {
+              "layout": "row_major",
+              "budget_bytes": 0,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10755199939012527
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 1048576,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10665600001811981
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 4194304,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.1069440022110939
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 16777216,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.1053759977221489
+            },
+            {
+              "layout": "row_major",
+              "budget_bytes": 67108864,
+              "algorithm": "heuristic_index_0",
+              "heuristic_index": 0,
+              "returned_count": 1,
+              "waves_count": -1.0,
+              "workspace_bytes": 0,
+              "status": "passed",
+              "p50_ms": 0.10649599879980087
+            }
+          ]
+        },
+        "col32": {
+          "attempted": true,
+          "stage": "heuristic",
+          "status_code": 0,
+          "status": "failed",
+          "success": true,
+          "logical_shape": [
+            1024,
+            4096
+          ],
+          "physical_shape": [
+            1024,
+            4096
+          ],
+          "leading_dimension": 32768,
+          "padding_cols": 0,
+          "buffer_bytes": 4194304,
+          "layout": "CUBLASLT_ORDER_COL32",
+          "candidates": [],
+          "cuBLASLt_status": "CUBLAS_STATUS_SUCCESS",
+          "reason": "cublasLt heuristic returned zero valid COL32 candidates"
+        }
+      },
+      "selected_layout": "row_major",
+      "selected_algorithm": "heuristic_index_0",
+      "workspace_data_ptr_stable": true,
+      "normal_reuse_ptr_stable": true,
+      "mismatch_weight_rejected": true,
+      "inplace_mutated_weight_rejected": true,
+      "bound_weight_identity_fields": [
+        "data_ptr",
+        "shape",
+        "dtype",
+        "device",
+        "version"
+      ],
+      "reprepare_after_rejection_succeeded": true
+    }
+  ]
+}

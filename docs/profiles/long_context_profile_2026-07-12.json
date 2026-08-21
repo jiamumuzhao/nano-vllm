@@ -1,0 +1,179 @@
+{
+  "code_structure_inferences": [
+    "The paged decode Triton grid is (batch, query_head). Each program handles one query head for one sequence and loops over all logical KV blocks, then over BLOCK_KV tiles inside each block.",
+    "Because each decode program scans the full current context for its sequence, paged decode attention work and memory traffic grow roughly linearly with context length for fixed batch and output length.",
+    "CUDA Graph removes launch overhead and Python dispatch from decode, but it does not change the per-token paged attention scan length."
+  ],
+  "created_at": "2026-07-12T09:00:45+00:00",
+  "environment": {
+    "cuda_available": true,
+    "cuda_runtime": "13.0",
+    "git": {
+      "commit": "5fc5453e1245fbd31f3906ca6a618f8276690c1b",
+      "is_dirty": true,
+      "status_short": [
+        "M README.md",
+        " M docs/baseline.md",
+        "?? docs/AI_INFRA_COMPLETED.md",
+        "?? docs/AI_INFRA_OPTIMIZATION_PLAN.md",
+        "?? docs/architecture.md",
+        "?? docs/benchmark.md",
+        "?? docs/benchmarks/",
+        "?? docs/profiles/",
+        "?? scripts/benchmark_offline.py",
+        "?? scripts/benchmark_offline_matrix.py",
+        "?? scripts/benchmark_offline_worker.py",
+        "?? scripts/benchmark_schema.py",
+        "?? scripts/check_vllm_feasibility.py",
+        "?? scripts/profile_nano_long_context.py"
+      ]
+    },
+    "gpu_count": 2,
+    "gpus": [
+      {
+        "capability": "7.5",
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_memory_bytes": 11337531392
+      },
+      {
+        "capability": "7.5",
+        "index": 1,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_memory_bytes": 11347623936
+      }
+    ],
+    "nvidia_smi": [
+      "595.71.05, NVIDIA GeForce RTX 2080 Ti, 7.5, 11264 MiB",
+      "595.71.05, NVIDIA GeForce RTX 2080 Ti, 7.5, 11264 MiB"
+    ],
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+    "python": "3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]",
+    "python_executable": "/opt/anaconda3/bin/python",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.12.1",
+    "triton": "3.6.0"
+  },
+  "matrix_reference": {
+    "long_context_batch8": {
+      "input_len": 2048,
+      "nano_graph_output_tokens_per_second": 174.06,
+      "num_seqs": 8,
+      "vllm_output_tokens_per_second": 310.18
+    },
+    "report": "docs/benchmarks/offline_matrix_2026-07-12.md",
+    "short_context_batch8": {
+      "input_len": 128,
+      "nano_graph_output_tokens_per_second": 1405.57,
+      "num_seqs": 8,
+      "vllm_output_tokens_per_second": 1393.55
+    }
+  },
+  "profiles": [
+    {
+      "command": "/opt/anaconda3/bin/python scripts/profile_nano_long_context.py --model /root/huggingface/Qwen3-0.6B --mode eager --num-seqs 8 --input-len 128 --output-len 64 --warmup-runs 1 --dtype float16 --max-model-len 4096 --max-num-batched-tokens 32768 --gpu-memory-utilization 0.5 --output-dir docs/profiles --profile-steps 12 --top-k 20",
+      "decode_seconds": 2.214239670545794,
+      "decode_step_mean_seconds": 0.03514666143723483,
+      "decode_step_median_seconds": 0.03508770698681474,
+      "decode_step_p95_seconds": 0.0354913420858793,
+      "decode_tokens": 504,
+      "decode_tokens_per_second": 227.61763629488567,
+      "input_len": 128,
+      "json": "docs/profiles/nano_profile_eager_input128_seqs8.json",
+      "markdown": "docs/profiles/nano_profile_eager_input128_seqs8.md",
+      "max_cuda_allocated_bytes": 3805318656,
+      "max_cuda_reserved_bytes": 3869245440,
+      "mode": "eager",
+      "num_seqs": 8,
+      "paged_decode_kernel_cuda_ms": 36.97676600000085,
+      "paged_prefill_kernel_cuda_ms": null,
+      "prefill_seconds": 0.09864794602617621,
+      "prefill_tokens": 1024,
+      "prefill_tokens_per_second": 10380.34790636474,
+      "varlen_prefill_kernel_cuda_ms": 72.389495
+    },
+    {
+      "command": "/opt/anaconda3/bin/python scripts/profile_nano_long_context.py --model /root/huggingface/Qwen3-0.6B --mode graph --num-seqs 8 --input-len 128 --output-len 64 --warmup-runs 1 --dtype float16 --max-model-len 4096 --max-num-batched-tokens 32768 --gpu-memory-utilization 0.5 --output-dir docs/profiles --profile-steps 12 --top-k 20",
+      "decode_seconds": 0.2904393137432635,
+      "decode_step_mean_seconds": 0.004610147837194658,
+      "decode_step_median_seconds": 0.004592702956870198,
+      "decode_step_p95_seconds": 0.004701986780855805,
+      "decode_tokens": 504,
+      "decode_tokens_per_second": 1735.302268499076,
+      "input_len": 128,
+      "json": "docs/profiles/nano_profile_graph_input128_seqs8.json",
+      "markdown": "docs/profiles/nano_profile_graph_input128_seqs8.md",
+      "max_cuda_allocated_bytes": 3813858304,
+      "max_cuda_reserved_bytes": 3894411264,
+      "mode": "graph",
+      "num_seqs": 8,
+      "paged_decode_kernel_cuda_ms": 35.7251709999997,
+      "paged_prefill_kernel_cuda_ms": null,
+      "prefill_seconds": 0.09939776000101119,
+      "prefill_tokens": 1024,
+      "prefill_tokens_per_second": 10302.043023802375,
+      "varlen_prefill_kernel_cuda_ms": 72.94642299999998
+    },
+    {
+      "command": "/opt/anaconda3/bin/python scripts/profile_nano_long_context.py --model /root/huggingface/Qwen3-0.6B --mode eager --num-seqs 8 --input-len 2048 --output-len 64 --warmup-runs 1 --dtype float16 --max-model-len 4096 --max-num-batched-tokens 32768 --gpu-memory-utilization 0.5 --output-dir docs/profiles --profile-steps 12 --top-k 20",
+      "decode_seconds": 2.2098528544884175,
+      "decode_step_mean_seconds": 0.03507702943632409,
+      "decode_step_median_seconds": 0.034996415954083204,
+      "decode_step_p95_seconds": 0.035378542367834595,
+      "decode_tokens": 504,
+      "decode_tokens_per_second": 228.06948389180255,
+      "input_len": 2048,
+      "json": "docs/profiles/nano_profile_eager_input2048_seqs8.json",
+      "markdown": "docs/profiles/nano_profile_eager_input2048_seqs8.md",
+      "max_cuda_allocated_bytes": 3834699776,
+      "max_cuda_reserved_bytes": 3932160000,
+      "mode": "eager",
+      "num_seqs": 8,
+      "paged_decode_kernel_cuda_ms": 311.0859839999988,
+      "paged_prefill_kernel_cuda_ms": 2155.04662,
+      "prefill_seconds": 2.2104853859636933,
+      "prefill_tokens": 2048,
+      "prefill_tokens_per_second": 926.4933453098332,
+      "varlen_prefill_kernel_cuda_ms": null
+    },
+    {
+      "command": "/opt/anaconda3/bin/python scripts/profile_nano_long_context.py --model /root/huggingface/Qwen3-0.6B --mode graph --num-seqs 8 --input-len 2048 --output-len 64 --warmup-runs 1 --dtype float16 --max-model-len 4096 --max-num-batched-tokens 32768 --gpu-memory-utilization 0.5 --output-dir docs/profiles --profile-steps 12 --top-k 20",
+      "decode_seconds": 0.6353030276950449,
+      "decode_step_mean_seconds": 0.01008417504277849,
+      "decode_step_median_seconds": 0.00967154698446393,
+      "decode_step_p95_seconds": 0.01213146859081462,
+      "decode_tokens": 504,
+      "decode_tokens_per_second": 793.3222069294586,
+      "input_len": 2048,
+      "json": "docs/profiles/nano_profile_graph_input2048_seqs8.json",
+      "markdown": "docs/profiles/nano_profile_graph_input2048_seqs8.md",
+      "max_cuda_allocated_bytes": 3843239424,
+      "max_cuda_reserved_bytes": 3957325824,
+      "mode": "graph",
+      "num_seqs": 8,
+      "paged_decode_kernel_cuda_ms": 360.21066800001773,
+      "paged_prefill_kernel_cuda_ms": 2191.886596,
+      "prefill_seconds": 2.2529870880534872,
+      "prefill_tokens": 2048,
+      "prefill_tokens_per_second": 909.0154181795201,
+      "varlen_prefill_kernel_cuda_ms": null
+    }
+  ],
+  "recommended_next_optimizations_not_implemented": [
+    "Prototype split-KV / partitioned-softmax paged decode and compare against the current one-program-per-(sequence,head) decode kernel.",
+    "Tune block/tile configuration and decode parallelism for long context on compute capability 7.5.",
+    "Profile and optimize paged prefill/block-table access for prefix-cache continuation workloads.",
+    "Only pursue other directions after profiler evidence shows they dominate the long-context path."
+  ],
+  "title": "Nano-vLLM long-context profiling, 2026-07-12",
+  "unverified_hypotheses": [
+    "vLLM's advantage at input_len=2048 likely comes from more parallel long-context attention/paged-prefill kernels and scheduling implementation details, but vLLM kernels were not profiled in this phase.",
+    "Split-KV or partitioned-softmax decode should reduce long-context decode latency by parallelizing the KV scan, but this has not been implemented or measured in Nano-vLLM."
+  ],
+  "verified_facts": [
+    "The profiled Nano-vLLM runs use the same prompt during warmup and measurement, matching the strict offline benchmark's prefix-cache behavior.",
+    "For input_len=2048,batch=8, the measured Nano-vLLM run schedules 2048 prefill tokens after warmup, consistent with reusing most full prompt blocks from prefix cache and recomputing one 256-token block per sequence.",
+    "In graph mode, input_len=2048 increases synchronized decode step mean latency from about 4.61 ms to about 10.08 ms.",
+    "In graph mode, the long-context profile's top CUDA events include about 2191.89 ms in _paged_prefill_kernel and about 360.21 ms in _decode_paged_kernel for the profiled steps."
+  ]
+}

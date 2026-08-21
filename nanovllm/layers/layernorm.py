@@ -13,7 +13,6 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(hidden_size))
 
-    @torch.compile
     def rms_forward(
         self,
         x: torch.Tensor,
@@ -21,9 +20,9 @@ class RMSNorm(nn.Module):
         orig_dtype = x.dtype
         x = x.float()
         var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x
+        x = x * torch.rsqrt(var + self.eps)
+        # Match Transformers Qwen3RMSNorm's cast-then-weight order.
+        return self.weight * x.to(orig_dtype)
 
     @torch.compile
     def add_rms_forward(
@@ -32,8 +31,13 @@ class RMSNorm(nn.Module):
         residual: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         orig_dtype = x.dtype
-        x = x.float().add_(residual.float())
-        residual = x.to(orig_dtype)
+        # Transformers' Qwen3 decoder performs the residual add in the
+        # activation dtype, then promotes only for RMSNorm statistics. The
+        # previous fused path added two FP16 tensors in FP32, changing the
+        # rounding boundary before layer 2 and later MLPs.
+        x = x.add_(residual)
+        residual = x.clone()
+        x = x.float()
         var = x.pow(2).mean(dim=-1, keepdim=True)
         x.mul_(torch.rsqrt(var + self.eps))
         x = x.to(orig_dtype).mul_(self.weight)

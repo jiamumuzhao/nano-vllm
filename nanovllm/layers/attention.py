@@ -5,6 +5,10 @@ import triton.language as tl
 
 from nanovllm.utils.context import get_context
 
+SPLIT_KV_BUCKETS = (1, 2, 4, 8, 16, 32)
+
+
+
 
 @triton.jit
 def store_kvcache_kernel(
@@ -150,7 +154,7 @@ def _varlen_prefill_kernel(
 # ---------------------------------------------------------------------------
 
 @triton.jit
-def _paged_prefill_kernel(
+def _paged_prefill_kernel_serial(
     q_ptr, k_cache_ptr, v_cache_ptr, o_ptr,
     cu_seqlens_q_ptr, cu_seqlens_k_ptr, block_tables_ptr,
     scale,
@@ -243,6 +247,101 @@ def _paged_prefill_kernel(
 
 
 @triton.jit
+def _paged_prefill_kernel(
+    q_ptr, k_cache_ptr, v_cache_ptr, o_ptr,
+    cu_seqlens_q_ptr, cu_seqlens_k_ptr, block_tables_ptr,
+    scale,
+    stride_q_t, stride_q_h, stride_q_d,
+    stride_kc_blk, stride_kc_t, stride_kc_h, stride_kc_d,
+    stride_vc_blk, stride_vc_t, stride_vc_h, stride_vc_d,
+    stride_bt_b,
+    stride_o_t, stride_o_h, stride_o_d,
+    BLOCK_Q: tl.constexpr,
+    BLOCK_KV: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    D: tl.constexpr,
+    N_HEADS: tl.constexpr,
+    N_KV_HEADS: tl.constexpr,
+):
+    seq_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+    q_tile_id = tl.program_id(2)
+
+    seq_q_start = tl.load(cu_seqlens_q_ptr + seq_id)
+    seq_q_end = tl.load(cu_seqlens_q_ptr + seq_id + 1)
+    q_start = seq_q_start + q_tile_id * BLOCK_Q
+    if q_start >= seq_q_end:
+        return
+    seq_k_start = tl.load(cu_seqlens_k_ptr + seq_id)
+    seq_k_end = tl.load(cu_seqlens_k_ptr + seq_id + 1)
+
+    seq_q_len = seq_q_end - seq_q_start
+    seq_k_len = seq_k_end - seq_k_start
+    prefix_len = seq_k_len - seq_q_len
+
+    if N_HEADS == N_KV_HEADS:
+        kv_head_id = head_id
+    else:
+        kv_head_id = head_id // (N_HEADS // N_KV_HEADS)
+
+    offs_d = tl.arange(0, D)
+
+    offs_q = q_start + tl.arange(0, BLOCK_Q)
+    q_mask = offs_q < seq_q_end
+    q = tl.load(
+        q_ptr + offs_q[:, None] * stride_q_t + head_id * stride_q_h + offs_d[None, :] * stride_q_d,
+        mask=q_mask[:, None],
+        other=0.0,
+    )
+
+    m_i = tl.full([BLOCK_Q], float("-inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_Q], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_Q, D], dtype=tl.float32)
+
+    for kv_start in range(0, seq_k_len, BLOCK_KV):
+        offs_kv = kv_start + tl.arange(0, BLOCK_KV)
+        kv_mask = offs_kv < seq_k_len
+        block_idx = offs_kv // BLOCK_SIZE
+        block_offset = offs_kv - block_idx * BLOCK_SIZE
+        block_id = tl.load(
+            block_tables_ptr + seq_id * stride_bt_b + block_idx,
+            mask=kv_mask,
+            other=0,
+        )
+
+        k = tl.load(
+            k_cache_ptr + block_id[:, None] * stride_kc_blk + block_offset[:, None] * stride_kc_t + kv_head_id * stride_kc_h + offs_d[None, :] * stride_kc_d,
+            mask=kv_mask[:, None],
+            other=0.0,
+        )
+        v = tl.load(
+            v_cache_ptr + block_id[:, None] * stride_vc_blk + block_offset[:, None] * stride_vc_t + kv_head_id * stride_vc_h + offs_d[None, :] * stride_vc_d,
+            mask=kv_mask[:, None],
+            other=0.0,
+        )
+
+        scores = tl.dot(q, tl.trans(k)) * scale
+        q_local = offs_q - seq_q_start
+        causal_mask = offs_kv[None, :] <= q_local[:, None] + prefix_len
+        valid_mask = q_mask[:, None] & kv_mask[None, :]
+        scores = tl.where(valid_mask & causal_mask, scores, float("-inf"))
+
+        m_new = tl.maximum(m_i, tl.max(scores, 1))
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(scores - m_new[:, None])
+
+        l_i = l_i * alpha + tl.sum(p, 1)
+        acc = acc * alpha[:, None] + tl.dot(p.to(tl.float16), v)
+        m_i = m_new
+
+    o = acc / l_i[:, None]
+    tl.store(
+        o_ptr + offs_q[:, None] * stride_o_t + head_id * stride_o_h + offs_d[None, :] * stride_o_d,
+        o.to(o_ptr.dtype.element_ty),
+        mask=q_mask[:, None],
+    )
+
+@triton.jit
 def _decode_paged_kernel(
     q_ptr, k_cache_ptr, v_cache_ptr, o_ptr,
     block_tables_ptr, context_lens_ptr,
@@ -329,6 +428,82 @@ def _decode_paged_kernel(
         o.to(o_ptr.dtype.element_ty),
     )
 
+@triton.jit
+def _decode_paged_split_kernel(
+    q_ptr, k_cache_ptr, v_cache_ptr, partial_max_ptr, partial_sum_ptr, partial_acc_ptr,
+    block_tables_ptr, context_lens_ptr, scale,
+    stride_q_b, stride_q_h, stride_q_d,
+    stride_kc_blk, stride_kc_t, stride_kc_h, stride_kc_d,
+    stride_vc_blk, stride_vc_t, stride_vc_h, stride_vc_d,
+    stride_pm_b, stride_pm_h, stride_pm_p, stride_ps_b, stride_ps_h, stride_ps_p,
+    stride_pa_b, stride_pa_h, stride_pa_p, stride_pa_d, stride_bt_b,
+    BLOCK_KV: tl.constexpr, BLOCK_SIZE: tl.constexpr, PARTITION_SIZE: tl.constexpr,
+    D: tl.constexpr, N_HEADS: tl.constexpr, N_KV_HEADS: tl.constexpr,
+):
+    batch_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+    partition_id = tl.program_id(2)
+    seq_len = tl.load(context_lens_ptr + batch_id)
+    partition_start = partition_id * PARTITION_SIZE
+    partition_end = tl.minimum(seq_len, partition_start + PARTITION_SIZE)
+    if N_HEADS == N_KV_HEADS:
+        kv_head_id = head_id
+    else:
+        kv_head_id = head_id // (N_HEADS // N_KV_HEADS)
+    offs_d = tl.arange(0, D)
+    q = tl.load(q_ptr + batch_id * stride_q_b + head_id * stride_q_h + offs_d * stride_q_d)
+    m_i = float("-inf")
+    l_i = 0.0
+    acc = tl.zeros([D], dtype=tl.float32)
+    # Local online-softmax state; reduction rescales it with the global maximum.
+    for kv_start in range(partition_start, partition_end, BLOCK_KV):
+        logical_offsets = kv_start + tl.arange(0, BLOCK_KV)
+        kv_mask = logical_offsets < partition_end
+        block_idx = logical_offsets // BLOCK_SIZE
+        block_offset = logical_offsets - block_idx * BLOCK_SIZE
+        block_id = tl.load(block_tables_ptr + batch_id * stride_bt_b + block_idx, mask=kv_mask, other=0)
+        k = tl.load(k_cache_ptr + block_id[:, None] * stride_kc_blk + block_offset[:, None] * stride_kc_t + kv_head_id * stride_kc_h + offs_d[None, :] * stride_kc_d, mask=kv_mask[:, None], other=0.0)
+        v = tl.load(v_cache_ptr + block_id[:, None] * stride_vc_blk + block_offset[:, None] * stride_vc_t + kv_head_id * stride_vc_h + offs_d[None, :] * stride_vc_d, mask=kv_mask[:, None], other=0.0)
+        scores = tl.sum(q[None, :] * k, axis=1) * scale
+        scores = tl.where(kv_mask, scores, float("-inf"))
+        m_new = tl.maximum(m_i, tl.max(scores))
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(scores - m_new)
+        l_i = l_i * alpha + tl.sum(p)
+        acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+        m_i = m_new
+    tl.store(partial_max_ptr + batch_id * stride_pm_b + head_id * stride_pm_h + partition_id * stride_pm_p, m_i)
+    tl.store(partial_sum_ptr + batch_id * stride_ps_b + head_id * stride_ps_h + partition_id * stride_ps_p, l_i)
+    tl.store(partial_acc_ptr + batch_id * stride_pa_b + head_id * stride_pa_h + partition_id * stride_pa_p + offs_d * stride_pa_d, acc)
+
+@triton.jit
+def _reduce_split_kv_kernel(
+    partial_max_ptr, partial_sum_ptr, partial_acc_ptr, o_ptr, num_partitions,
+    stride_pm_b, stride_pm_h, stride_pm_p, stride_ps_b, stride_ps_h, stride_ps_p,
+    stride_pa_b, stride_pa_h, stride_pa_p, stride_pa_d, stride_o_b, stride_o_h, stride_o_d,
+    D: tl.constexpr, MAX_PARTITIONS: tl.constexpr,
+):
+    batch_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+    offs_d = tl.arange(0, D)
+    global_max = float("-inf")
+    for partition_id in range(0, MAX_PARTITIONS):
+        valid = partition_id < num_partitions
+        m = tl.load(partial_max_ptr + batch_id * stride_pm_b + head_id * stride_pm_h + partition_id * stride_pm_p, mask=valid, other=float("-inf"))
+        global_max = tl.maximum(global_max, m)
+    total_sum = 0.0
+    total_acc = tl.zeros([D], dtype=tl.float32)
+    for partition_id in range(0, MAX_PARTITIONS):
+        valid = partition_id < num_partitions
+        m = tl.load(partial_max_ptr + batch_id * stride_pm_b + head_id * stride_pm_h + partition_id * stride_pm_p, mask=valid, other=float("-inf"))
+        s = tl.load(partial_sum_ptr + batch_id * stride_ps_b + head_id * stride_ps_h + partition_id * stride_ps_p, mask=valid, other=0.0)
+        a = tl.load(partial_acc_ptr + batch_id * stride_pa_b + head_id * stride_pa_h + partition_id * stride_pa_p + offs_d * stride_pa_d, mask=valid, other=0.0)
+        weight = tl.where(m == float("-inf"), 0.0, tl.exp(m - global_max))
+        total_sum += s * weight
+        total_acc += a * weight
+    o = total_acc / total_sum
+    tl.store(o_ptr + batch_id * stride_o_b + head_id * stride_o_h + offs_d * stride_o_d, o.to(o_ptr.dtype.element_ty))
+
 
 # ---------------------------------------------------------------------------
 # Attention module
@@ -342,6 +517,7 @@ class Attention(nn.Module):
         head_dim,
         scale,
         num_kv_heads,
+        split_kv_config=None,
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -350,6 +526,51 @@ class Attention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.enable_gqa = num_heads != num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
+        cfg = split_kv_config or {}
+        self.split_kv_enabled = cfg.get("split_kv_enabled", True)
+        self.split_kv_threshold = cfg.get("split_kv_threshold", 1024)
+        self.split_kv_partition_size = cfg.get("split_kv_partition_size", 1024)
+        self.split_kv_max_partitions = cfg.get("split_kv_max_partitions", 16)
+        mode = cfg.get("paged_prefill_q_tile_mode", "auto")
+        legacy_parallel = cfg.get("paged_prefill_q_tile_parallel")
+        if mode == "auto" and legacy_parallel is not None:
+            # Backward compatibility: an explicitly supplied legacy bool wins
+            # over auto, preserving its old forced serial/parallel behavior.
+            mode = "parallel" if legacy_parallel else "serial"
+        if mode not in ("serial", "parallel", "auto"):
+            raise ValueError("paged_prefill_q_tile_mode must be serial, parallel, or auto")
+        self.paged_prefill_q_tile_mode = mode
+        self.paged_prefill_auto_min_batch_size = cfg.get("paged_prefill_auto_min_batch_size", 8)
+        self.paged_prefill_auto_min_q_tiles = cfg.get("paged_prefill_auto_min_q_tiles", 128)
+        self.paged_prefill_auto_parallel_enabled = cfg.get("paged_prefill_auto_parallel_enabled", False)
+        # Benchmark-only overrides; None preserves the production heuristic.
+        self.paged_prefill_block_q = cfg.get("paged_prefill_block_q")
+        self.paged_prefill_block_kv = cfg.get("paged_prefill_block_kv")
+        self.paged_prefill_num_warps = cfg.get("paged_prefill_num_warps")
+        self._split_workspace = None
+
+    def initialize_split_workspace(self, max_batch_size: int, device: torch.device,
+                                    max_partitions: int | None = None):
+        max_partitions = max_partitions or self.split_kv_max_partitions
+        shape = (max_batch_size, self.num_heads, max_partitions)
+        acc_shape = shape + (self.head_dim,)
+        self._split_workspace = (
+            torch.empty(shape, device=device, dtype=torch.float32),
+            torch.empty(shape, device=device, dtype=torch.float32),
+            torch.empty(acc_shape, device=device, dtype=torch.float32),
+        )
+
+    def _split_partition_count(self, context_len: int) -> int:
+        requested = max(1, (context_len + self.split_kv_partition_size - 1) // self.split_kv_partition_size)
+        for bucket in SPLIT_KV_BUCKETS:
+            if requested <= bucket:
+                if bucket > self.split_kv_max_partitions:
+                    break
+                return bucket
+        raise ValueError(
+            f"Split-KV context length {context_len} requires {requested} partitions, "
+            f"exceeding split_kv_max_partitions={self.split_kv_max_partitions}"
+        )
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         context = get_context()
@@ -396,6 +617,25 @@ class Attention(nn.Module):
     # Paged prefill (prefix cache) -- read full K/V directly from KV cache.
     # ------------------------------------------------------------------
 
+    def _select_paged_prefill_path(self, batch_size: int, max_seqlen_q: int,
+                                   block_q: int) -> bool:
+        """Return whether to use Q-tile parallel paged prefill.
+
+        The latest formal 2026-07-20 Qwen3-0.6B eager matrix on an RTX 2080 Ti
+        showed no clear end-to-end parallel gain across its 18 workloads, so
+        auto safely falls back to serial. The batch/tile thresholds remain
+        configurable for a future revalidated matrix. Explicit serial/parallel
+        modes always override auto.
+        """
+        if self.paged_prefill_q_tile_mode == "serial":
+            return False
+        if self.paged_prefill_q_tile_mode == "parallel":
+            return True
+        q_tile_count = (max_seqlen_q + block_q - 1) // block_q
+        return (self.paged_prefill_auto_parallel_enabled
+                and batch_size >= self.paged_prefill_auto_min_batch_size
+                and q_tile_count >= self.paged_prefill_auto_min_q_tiles)
+
     def _prefill_paged(self, q: torch.Tensor, k_new: torch.Tensor, v_new: torch.Tensor,
                        k_cache: torch.Tensor, v_cache: torch.Tensor, context) -> torch.Tensor:
         block_size = k_cache.size(1)
@@ -403,7 +643,6 @@ class Attention(nn.Module):
         assert context.block_tables is not None
         o = torch.empty_like(q)
         batch_size = context.cu_seqlens_q.numel() - 1
-        grid = (batch_size, self.num_heads)
         max_seqlen_q = context.max_seqlen_q or q.size(0)
         if max_seqlen_q <= 1:
             block_q, block_kv, num_warps = 1, 64, 4
@@ -411,7 +650,21 @@ class Attention(nn.Module):
             block_q, block_kv, num_warps = 16, 64, 4
         else:
             block_q, block_kv, num_warps = 32, 64, 4
-        _paged_prefill_kernel[grid](
+        if self.paged_prefill_block_q is not None:
+            block_q = self.paged_prefill_block_q
+        if self.paged_prefill_block_kv is not None:
+            block_kv = self.paged_prefill_block_kv
+        if self.paged_prefill_num_warps is not None:
+            num_warps = self.paged_prefill_num_warps
+        max_q_tiles = (max_seqlen_q + block_q - 1) // block_q
+        use_parallel = self._select_paged_prefill_path(batch_size, max_seqlen_q, block_q)
+        if use_parallel:
+            grid = (batch_size, self.num_heads, max_q_tiles)
+            kernel = _paged_prefill_kernel
+        else:
+            grid = (batch_size, self.num_heads)
+            kernel = _paged_prefill_kernel_serial
+        kernel[grid](
             q, k_cache, v_cache, o,
             context.cu_seqlens_q, context.cu_seqlens_k, context.block_tables,
             self.scale,
@@ -440,6 +693,42 @@ class Attention(nn.Module):
         assert self.head_dim in (64, 128, 256)
 
         o = torch.empty_like(q)
+        graph_capture = torch.cuda.is_current_stream_capturing()
+        # CUDA Graph capture intentionally keeps Split-KV disabled: the graph path
+        # must not inspect a device tensor with .item(), change its grid, or allocate.
+        max_context_len = int(context.context_lens.max().item()) if not graph_capture else 0
+        use_split = (self.split_kv_enabled and not graph_capture
+                     and max_context_len >= self.split_kv_threshold)
+        if use_split:
+            num_partitions = self._split_partition_count(max_context_len)
+            if self._split_workspace is None:
+                raise RuntimeError("Split-KV workspace was not initialized before decode")
+            partial_max, partial_sum, partial_acc = self._split_workspace
+            partial_max = partial_max[:bs]
+            partial_sum = partial_sum[:bs]
+            partial_acc = partial_acc[:bs]
+            _decode_paged_split_kernel[(bs, self.num_heads, num_partitions)](
+                q, k_cache, v_cache, partial_max, partial_sum, partial_acc,
+                context.block_tables, context.context_lens, self.scale,
+                q.stride(0), q.stride(1), q.stride(2),
+                k_cache.stride(0), k_cache.stride(1), k_cache.stride(2), k_cache.stride(3),
+                v_cache.stride(0), v_cache.stride(1), v_cache.stride(2), v_cache.stride(3),
+                partial_max.stride(0), partial_max.stride(1), partial_max.stride(2),
+                partial_sum.stride(0), partial_sum.stride(1), partial_sum.stride(2),
+                partial_acc.stride(0), partial_acc.stride(1), partial_acc.stride(2), partial_acc.stride(3),
+                context.block_tables.stride(0),
+                BLOCK_KV=64, BLOCK_SIZE=block_size, PARTITION_SIZE=self.split_kv_partition_size,
+                D=self.head_dim, N_HEADS=self.num_heads, N_KV_HEADS=self.num_kv_heads,
+            )
+            _reduce_split_kv_kernel[(bs, self.num_heads)](
+                partial_max, partial_sum, partial_acc, o, num_partitions,
+                partial_max.stride(0), partial_max.stride(1), partial_max.stride(2),
+                partial_sum.stride(0), partial_sum.stride(1), partial_sum.stride(2),
+                partial_acc.stride(0), partial_acc.stride(1), partial_acc.stride(2), partial_acc.stride(3),
+                o.stride(0), o.stride(1), o.stride(2),
+                D=self.head_dim, MAX_PARTITIONS=self.split_kv_max_partitions,
+            )
+            return o
 
         grid = (bs, self.num_heads)
         _decode_paged_kernel[grid](

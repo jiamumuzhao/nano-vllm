@@ -1,0 +1,325 @@
+{
+  "environment": {
+    "timestamp_utc": "2026-07-22T07:22:35.117063+00:00",
+    "gpu": "NVIDIA GeForce RTX 2080 Ti",
+    "compute_capability": [
+      7,
+      5
+    ],
+    "pytorch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "python": "3.13.9",
+    "warmup": 30,
+    "iters": 100,
+    "hmma_evidence_path": "docs/benchmarks/w8a16_tensorcore_codegen_20260722T072129Z.json"
+  },
+  "results": [
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 1024,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.0638758397474885,
+        "p50_ms": 0.06358399987220764,
+        "p95_ms": 0.06523199379444122,
+        "tflops": 0.03283169361515058
+      },
+      "peak_memory_allocated_bytes": 3153920,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 1024,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.10264160007238388,
+        "p50_ms": 0.10281600058078766,
+        "p95_ms": 0.1043567955493927,
+        "tflops": 0.02043179372224388
+      },
+      "peak_memory_allocated_bytes": 3153920,
+      "relative_to_legacy_p50_speedup": -0.3815748568993741
+    },
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 1024,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.033840320110321044,
+        "p50_ms": 0.03332800045609474,
+        "p95_ms": 0.036513593047857285,
+        "tflops": 0.061971990606565934
+      },
+      "peak_memory_allocated_bytes": 12724224,
+      "relative_to_legacy_p50_speedup": 0.9078252220972933
+    },
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 4096,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.0813536000996828,
+        "p50_ms": 0.0814879983663559,
+        "p95_ms": 0.08202079683542252,
+        "tflops": 0.10311292911096022
+      },
+      "peak_memory_allocated_bytes": 22177792,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 4096,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.144688960313797,
+        "p50_ms": 0.1435680091381073,
+        "p95_ms": 0.15098080039024353,
+        "tflops": 0.05797683514904692
+      },
+      "peak_memory_allocated_bytes": 22177792,
+      "relative_to_legacy_p50_speedup": -0.43240838362557954
+    },
+    {
+      "family": "decode",
+      "M": 1,
+      "N": 4096,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.03893791992217302,
+        "p50_ms": 0.03884800150990486,
+        "p95_ms": 0.04024159908294678,
+        "tflops": 0.21543544228265632
+      },
+      "peak_memory_allocated_bytes": 22185984,
+      "relative_to_legacy_p50_speedup": 1.0976110790558775
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 1024,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.06665823981165886,
+        "p50_ms": 0.06670400500297546,
+        "p95_ms": 0.06755360215902328,
+        "tflops": 0.12584502716696083
+      },
+      "peak_memory_allocated_bytes": 12734464,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 1024,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.10232223995029927,
+        "p50_ms": 0.10227199643850327,
+        "p95_ms": 0.10396800190210342,
+        "tflops": 0.08198225531492058
+      },
+      "peak_memory_allocated_bytes": 12734464,
+      "relative_to_legacy_p50_speedup": -0.3477784014602183
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 1024,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.03536287993192673,
+        "p50_ms": 0.03481600061058998,
+        "p95_ms": 0.0385407879948616,
+        "tflops": 0.23721506891260005
+      },
+      "peak_memory_allocated_bytes": 12742656,
+      "relative_to_legacy_p50_speedup": 0.9159008453913604
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 4096,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.08093343988060951,
+        "p50_ms": 0.08078399300575256,
+        "p95_ms": 0.08210239559412003,
+        "tflops": 0.4145929303078981
+      },
+      "peak_memory_allocated_bytes": 22208512,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 4096,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.14678144052624703,
+        "p50_ms": 0.14664000272750854,
+        "p95_ms": 0.1492207944393158,
+        "tflops": 0.22860132643268272
+      },
+      "peak_memory_allocated_bytes": 22208512,
+      "relative_to_legacy_p50_speedup": -0.44909989427736074
+    },
+    {
+      "family": "decode",
+      "M": 4,
+      "N": 4096,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.04306400008499622,
+        "p50_ms": 0.043007999658584595,
+        "p95_ms": 0.0446447990834713,
+        "tflops": 0.7791759226679591
+      },
+      "peak_memory_allocated_bytes": 22241280,
+      "relative_to_legacy_p50_speedup": 0.878348066570162
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 1024,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.07675807990133762,
+        "p50_ms": 0.07680000364780426,
+        "p95_ms": 0.07776319980621338,
+        "tflops": 0.43714527569123396
+      },
+      "peak_memory_allocated_bytes": 12783616,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 1024,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.12686432003974915,
+        "p50_ms": 0.1268800050020218,
+        "p95_ms": 0.1277903914451599,
+        "tflops": 0.26449069359680266
+      },
+      "peak_memory_allocated_bytes": 12783616,
+      "relative_to_legacy_p50_speedup": -0.39470365211145386
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 1024,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.03491007998585701,
+        "p50_ms": 0.03468799963593483,
+        "p95_ms": 0.03719679266214371,
+        "tflops": 0.9611674339787758
+      },
+      "peak_memory_allocated_bytes": 12816384,
+      "relative_to_legacy_p50_speedup": 1.214022268618907
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 4096,
+      "K": 1024,
+      "mode": "legacy_single_warp",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_legacy",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.06650656007230282,
+        "p50_ms": 0.06643199920654297,
+        "p95_ms": 0.06764960289001465,
+        "tflops": 2.0181126170724326
+      },
+      "peak_memory_allocated_bytes": 22331392,
+      "relative_to_legacy_p50_speedup": 0.0
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 4096,
+      "K": 1024,
+      "mode": "decode_wide_candidate",
+      "kernel_path": "cuda_fp16_tensorcore_wmma_decode_wide_candidate",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.11292511984705925,
+        "p50_ms": 0.11264000087976456,
+        "p95_ms": 0.11468800157308578,
+        "tflops": 1.1885551078606647
+      },
+      "peak_memory_allocated_bytes": 22331392,
+      "relative_to_legacy_p50_speedup": -0.41022728437782463
+    },
+    {
+      "family": "decode",
+      "M": 16,
+      "N": 4096,
+      "K": 1024,
+      "mode": "fp16_f_linear",
+      "kernel_path": "fp16_f_linear",
+      "selected_runtime_path": "cuda_fp16_tensorcore_wmma_decode_legacy",
+      "latency": {
+        "mean_ms": 0.04071328014135361,
+        "p50_ms": 0.040672000497579575,
+        "p95_ms": 0.04230400174856186,
+        "tflops": 3.2966571972095005
+      },
+      "peak_memory_allocated_bytes": 22462464,
+      "relative_to_legacy_p50_speedup": 0.6333595199109125
+    }
+  ],
+  "note": "Wide decode is benchmark-only; production selector remains legacy unless all six P50 workloads clear the 5% gate."
+}

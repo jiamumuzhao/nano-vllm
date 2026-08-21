@@ -1,0 +1,28 @@
+{
+  "timestamp_utc": "2026-07-21T06:13:53.688087+00:00",
+  "status": "failed",
+  "kernel_path": "fp32_fma_fallback",
+  "ptx_paths": [
+    "/tmp/nano-vllm-triton-cache-1qttnn2y/UAXWKONROEOJQSZBZ667AQNF3QHJNKRT5TWGMTOXBL4YG5GMCZLQ/_w8a16_kernel.ptx"
+  ],
+  "ptx_path": "/tmp/nano-vllm-triton-cache-1qttnn2y/UAXWKONROEOJQSZBZ667AQNF3QHJNKRT5TWGMTOXBL4YG5GMCZLQ/_w8a16_kernel.ptx",
+  "ptx_contains_mma_sync": false,
+  "ptx_contains_fp16_mma": false,
+  "ptx_contains_fma_rn_f32": true,
+  "sass_paths": [
+    "/tmp/nano-vllm-triton-cache-1qttnn2y/UAXWKONROEOJQSZBZ667AQNF3QHJNKRT5TWGMTOXBL4YG5GMCZLQ/_w8a16_kernel.cubin"
+  ],
+  "sass_contains_hmma": false,
+  "compiler_error": null,
+  "run_error": null,
+  "pytorch_version": "2.11.0+cu130",
+  "cuda_version": "13.0",
+  "triton_version": "3.6.0",
+  "python_version": "3.13.9",
+  "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "gpu_count": 1
+}

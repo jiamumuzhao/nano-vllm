@@ -1,5 +1,9 @@
 import pickle
+import os
+import time
+from datetime import timedelta
 import torch
+import torch.nn.functional as F
 import torch.distributed as dist
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
@@ -12,16 +16,47 @@ from nanovllm.utils.context import set_context, get_context, reset_context
 from nanovllm.utils.loader import load_model
 
 
+def wait_for_worker_ready_events(ready_events, worker_processes, endpoint, timeout):
+    """Wait for all TP workers without an unbounded synchronization primitive."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if all(event.is_set() for event in ready_events):
+            return
+        diagnostics = [
+            {"rank": rank, "pid": process.pid, "is_alive": process.is_alive(),
+             "exitcode": process.exitcode, "ready": ready_events[rank - 1].is_set()}
+            for rank, process in enumerate(worker_processes, 1)
+        ]
+        dead = [item["rank"] for item in diagnostics if not item["is_alive"] and not item["ready"]]
+        if dead or time.monotonic() >= deadline:
+            unready = [item["rank"] for item in diagnostics if not item["ready"]]
+            raise RuntimeError(
+                f"TP worker readiness timeout: unready_ranks={unready}, workers={diagnostics}, "
+                f"endpoint={endpoint}, timeout={timeout}s"
+            )
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
 class ModelRunner:
 
-    def __init__(self, config: Config, rank: int, event: Event | list[Event]):
+    def __init__(self, config: Config, rank: int, event: Event | list[Event], ready_event: Event | list[Event] | None = None, worker_processes=None):
         self.config = config
         hf_config = config.hf_config
         self.block_size = config.kvcache_block_size
-        self.enforce_eager = config.enforce_eager
+        # W8A16 is eager-only in the first implementation. Its Triton Linear
+        # forward allocates an output tensor, so it must never be captured or replayed.
+        self.enforce_eager = self.effective_enforce_eager(config)
+        self.quantization_runtime_metadata = self.quantization_metadata(config)
+        self.cuda_graph_disabled_reason = (
+            "w8a16 eager-only memory-optimization mode: Triton Linear allocates outputs in forward; "
+            "none remains the default FP16 performance baseline"
+            if config.quantization == "w8a16" else None
+        )
         self.world_size = config.tensor_parallel_size
         self.rank = rank
         self.event = event
+        self.ready_event = ready_event
+        self.worker_processes = worker_processes or []
 
         dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
         model_dtype = hf_config.torch_dtype if config.dtype == "auto" else dtype_map[config.dtype]
@@ -29,33 +64,93 @@ class ModelRunner:
         torch.cuda.set_device(rank)
         self.model_dtype = model_dtype
 
-        dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank, device_id=rank)
+        dist.init_process_group(
+            "nccl", config.distributed_init_method,
+            world_size=self.world_size, rank=rank, device_id=rank,
+            timeout=timedelta(seconds=config.tp_startup_timeout),
+        )
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(model_dtype)
         torch.set_default_device("cuda")
-        self.model = Qwen3ForCausalLM(hf_config)
+        split_kv_config = dict(
+            quantization=config.quantization,
+            split_kv_enabled=config.split_kv_enabled,
+            split_kv_threshold=config.split_kv_threshold,
+            split_kv_partition_size=config.split_kv_partition_size,
+            split_kv_max_partitions=config.split_kv_max_partitions,
+            paged_prefill_q_tile_mode=config.paged_prefill_q_tile_mode,
+            paged_prefill_q_tile_parallel=config.paged_prefill_q_tile_parallel,
+            paged_prefill_auto_min_batch_size=config.paged_prefill_auto_min_batch_size,
+            paged_prefill_auto_min_q_tiles=config.paged_prefill_auto_min_q_tiles,
+            paged_prefill_auto_parallel_enabled=config.paged_prefill_auto_parallel_enabled,
+        )
+        self.model = Qwen3ForCausalLM(hf_config, split_kv_config)
+        # Allocate every layer's Split-KV workspace before warmup and graph capture.
+        # Decode only slices these fixed buffers; it never grows or recreates them.
+        for module in self.model.modules():
+            if hasattr(module, "initialize_split_workspace"):
+                module.initialize_split_workspace(min(config.max_num_seqs, 512), torch.device("cuda"))
         load_model(self.model, config.model)
+        if config.quantization == "w8a16":
+            for module in self.model.modules():
+                if hasattr(module, "quantize"):
+                    module.quantize()
         self.sampler = Sampler()
         self.warmup_model()
         self.allocate_kv_cache()
-        if not self.enforce_eager:
+        if self.should_capture_cudagraph():
             self.capture_cudagraph()
         torch.set_default_device("cpu")
         torch.set_default_dtype(default_dtype)
 
         if self.world_size > 1:
             if rank == 0:
-                self.shm = SharedMemory(name="nanovllm", create=True, size=2**20)
+                self._wait_for_workers_ready()
+                self.shm = SharedMemory(name=config.shared_memory_name, create=True, size=2**20)
                 dist.barrier()
             else:
+                self.ready_event.set()
                 dist.barrier()
-                self.shm = SharedMemory(name="nanovllm")
+                self.shm = SharedMemory(name=config.shared_memory_name)
                 self.loop()
+
+    def _wait_for_workers_ready(self):
+        wait_for_worker_ready_events(
+            self.ready_event, self.worker_processes,
+            self.config.distributed_init_method, self.config.tp_startup_timeout,
+        )
+
+    @staticmethod
+    def effective_enforce_eager(config: Config) -> bool:
+        return config.enforce_eager or config.quantization == "w8a16"
+
+    @staticmethod
+    def quantization_metadata(config: Config) -> dict:
+        if config.quantization == "none":
+            return {
+                "quantization": "none",
+                "route": "fp16",
+                "role": "default FP16 performance baseline",
+                "w8a8_production_enabled": False,
+            }
+        if config.quantization == "w8a16":
+            return {
+                "quantization": "w8a16",
+                "route": "w8a16",
+                "role": "explicit weight-memory optimization; not guaranteed faster than FP16",
+                "w8a8_production_enabled": False,
+            }
+        raise ValueError(
+            f"unsupported production quantization={config.quantization!r}: W8A8 is benchmark-only; "
+            "use none or w8a16"
+        )
+
+    def should_capture_cudagraph(self) -> bool:
+        return not self.enforce_eager and self.config.quantization == "none"
 
     def exit(self):
         if self.world_size > 1:
             self.shm.close()
-            dist.barrier()
             if self.rank == 0:
                 self.shm.unlink()
         if not self.enforce_eager:
@@ -252,6 +347,26 @@ class ModelRunner:
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
         reset_context()
         return token_ids
+
+    @torch.inference_mode()
+    def run_logits_for_validation(self, seqs: list[Sequence], is_prefill: bool) -> torch.Tensor:
+        """Return full-vocabulary logits for the TP=1 alignment verifier only.
+
+        The serving path deliberately selects only the last logit of each
+        prefill sequence inside ``ParallelLMHead`` and immediately samples it.
+        This opt-in validation hook bypasses that sampler and applies the TP=1
+        LM head to every valid hidden state.  It does not create a persistent
+        logits workspace and is intentionally unavailable for tensor-parallel
+        validation, where gathering full logits would change the test setup.
+        """
+        if self.world_size != 1:
+            raise ValueError("run_logits_for_validation supports tensor_parallel_size=1 only")
+        input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+        try:
+            hidden_states = self.model(input_ids, positions)
+            return F.linear(hidden_states, self.model.lm_head.weight)
+        finally:
+            reset_context()
 
     @torch.inference_mode()
     def capture_cudagraph(self):

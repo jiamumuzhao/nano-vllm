@@ -1,0 +1,57 @@
+{
+  "timestamp_utc": "2026-07-23T02:43:33.252565+00:00",
+  "status": "passed",
+  "verification": "cublaslt_api_verified",
+  "custom_extension_sass_claim": false,
+  "gpu": "NVIDIA GeForce RTX 2080 Ti",
+  "compute_capability": [
+    7,
+    5
+  ],
+  "cuda": "13.0",
+  "pytorch": "2.11.0+cu130",
+  "python": "3.13.9",
+  "cublaslt_version": null,
+  "extension": "nanovllm.kernels._w8a8_cublaslt",
+  "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+  "shapes": [
+    {
+      "shape": {
+        "M": 32,
+        "N": 1024,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "workspace_data_ptr_stable": true
+    },
+    {
+      "shape": {
+        "M": 256,
+        "N": 4096,
+        "K": 1024
+      },
+      "runtime_path": "w8a8_experimental_cublaslt_int8_i32",
+      "status": "passed",
+      "compute_type": "CUBLAS_COMPUTE_32I",
+      "A_dtype": "CUDA_R_8I",
+      "B_dtype": "CUDA_R_8I",
+      "C_dtype": "CUDA_R_32I",
+      "D_dtype": "CUDA_R_32I",
+      "weight_input_layout": "[N,K] contiguous int8",
+      "weight_packed_layout": "[K,N] contiguous int8 row-major",
+      "algorithm": "heuristic_index_0",
+      "workspace_bytes": 0,
+      "workspace_data_ptr_stable": true
+    }
+  ]
+}

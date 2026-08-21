@@ -1,15 +1,19 @@
 import atexit
+import os
+import uuid
 from dataclasses import fields
 from time import perf_counter
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import torch.multiprocessing as mp
+import torch.distributed as dist
 
 from nanovllm.config import Config
 from nanovllm.sampling_params import SamplingParams
 from nanovllm.engine.sequence import Sequence
 from nanovllm.engine.scheduler import Scheduler
 from nanovllm.engine.model_runner import ModelRunner
+from multiprocessing.shared_memory import SharedMemory
 
 
 class LLMEngine:
@@ -18,32 +22,117 @@ class LLMEngine:
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
+        config.shared_memory_name = f"nanovllm_{os.getpid()}_{uuid.uuid4().hex}"
+        self.config = config
         Sequence.block_size = config.kvcache_block_size
         self.ps = []
         self.events = []
+        self.ready_events = []
         self._exited = False
+        self.shutdown_diagnostic = None
         ctx = mp.get_context("spawn")
-        for i in range(1, config.tensor_parallel_size):
-            event = ctx.Event()
-            process = ctx.Process(target=ModelRunner, args=(config, i, event))
-            process.start()
-            self.ps.append(process)
-            self.events.append(event)
-        self.model_runner = ModelRunner(config, 0, self.events)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
-        config.eos = self.tokenizer.eos_token_id
-        self.scheduler = Scheduler(config)
-        atexit.register(self.exit)
+        try:
+            for i in range(1, config.tensor_parallel_size):
+                event = ctx.Event()
+                ready_event = ctx.Event()
+                process = ctx.Process(target=ModelRunner, args=(config, i, event, ready_event))
+                process.start()
+                self.ps.append(process)
+                self.events.append(event)
+                self.ready_events.append(ready_event)
+            self.model_runner = ModelRunner(config, 0, self.events, self.ready_events, self.ps)
+            self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
+            config.eos = self.tokenizer.eos_token_id
+            self.scheduler = Scheduler(config)
+            self._atexit_callback = self.exit
+            atexit.register(self._atexit_callback)
+        except BaseException:
+            # ModelRunner initializes NCCL before model/KV setup.  If setup
+            # fails, tear down the parent group and all spawned workers before
+            # exposing the original exception to the caller.
+            self._destroy_parent_group()
+            self._unlink_shared_memory()
+            self._reap_workers(config.tp_shutdown_timeout)
+            self.ps.clear()
+            raise
+
+    def _destroy_parent_group(self):
+        if dist.is_initialized():
+            try:
+                dist.destroy_process_group()
+            except Exception:
+                pass
+
+    def _unlink_shared_memory(self):
+        name = getattr(getattr(self, "config", None), "shared_memory_name", None)
+        if not name:
+            return
+        try:
+            shm = SharedMemory(name=name)
+        except FileNotFoundError:
+            return
+        try:
+            shm.unlink()
+        finally:
+            shm.close()
+
+    def _worker_diagnostics(self):
+        return [
+            {"rank": i + 1, "pid": p.pid, "is_alive": p.is_alive(), "exitcode": p.exitcode,
+             "ready": self.ready_events[i].is_set() if i < len(self.ready_events) else False}
+            for i, p in enumerate(self.ps)
+        ]
+
+    def _reap_workers(self, timeout):
+        for p in self.ps:
+            p.join(timeout=timeout)
+        stuck = [p for p in self.ps if p.is_alive()]
+        if stuck:
+            for p in stuck:
+                p.terminate()
+            for p in stuck:
+                p.join(timeout=timeout)
+        return stuck
 
     def exit(self):
         if self._exited:
             return
         self._exited = True
-        if hasattr(self, "model_runner"):
-            self.model_runner.call("exit")
-            del self.model_runner
-        for p in self.ps:
-            p.join()
+        callback = getattr(self, "_atexit_callback", None)
+        if callback is not None:
+            atexit.unregister(callback)
+            self._atexit_callback = None
+        failure = None
+        try:
+            if hasattr(self, "model_runner"):
+                self.model_runner.call("exit")
+        except BaseException as exc:
+            failure = exc
+        finally:
+            # Engine shutdown must release scheduler-owned KV block references
+            # even when a runner call failed. This is cleanup only; it does not
+            # change scheduling or inference behavior.
+            if hasattr(self, "scheduler"):
+                manager = self.scheduler.block_manager
+                for seq in (*self.scheduler.waiting, *self.scheduler.running):
+                    if seq.block_table:
+                        manager.deallocate(seq)
+                self.scheduler.waiting.clear()
+                self.scheduler.running.clear()
+            if hasattr(self, "model_runner"):
+                del self.model_runner
+            stuck = self._reap_workers(self.config.tp_shutdown_timeout)
+            self._destroy_parent_group()
+            self._unlink_shared_memory()
+            if stuck:
+                self.shutdown_diagnostic = (
+                    f"TP worker shutdown timed out after {self.config.tp_shutdown_timeout}s: "
+                    f"workers={self._worker_diagnostics()}, endpoint={self.config.distributed_init_method}"
+                )
+            elif failure is not None:
+                self.shutdown_diagnostic = f"TP shutdown failed: {type(failure).__name__}: {failure}"
+        if self.shutdown_diagnostic:
+            raise RuntimeError(self.shutdown_diagnostic) from failure
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
         if isinstance(prompt, str):
