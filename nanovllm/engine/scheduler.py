@@ -12,7 +12,11 @@ class Scheduler:
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
         self.block_size = config.kvcache_block_size
-        self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
+        self.block_manager = BlockManager(
+            config.num_kvcache_blocks,
+            config.kvcache_block_size,
+            None if config.prefix_cache_max_blocks == -1 else config.prefix_cache_max_blocks,
+        )
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
         self._sequences: dict[int, Sequence] = {}
@@ -48,6 +52,13 @@ class Scheduler:
             "prefix_cache_cached_tokens": self.prefix_cache_cached_tokens,
             "prefix_cache_hit_rate": self.prefix_cache_hit_requests / requests if requests else 0.0,
             "prefix_cache_token_hit_rate": self.prefix_cache_cached_tokens / prompt_tokens if prompt_tokens else 0.0,
+            "prefix_cache_blocks": self.block_manager.prefix_cache_blocks,
+            "prefix_cache_max_blocks": self.block_manager.prefix_cache_max_blocks,
+            "prefix_cache_usage_ratio": (
+                self.block_manager.prefix_cache_blocks / self.block_manager.prefix_cache_max_blocks
+                if self.block_manager.prefix_cache_max_blocks else 0.0
+            ),
+            "prefix_cache_evictions": self.block_manager.prefix_cache_evictions,
         }
 
     def is_finished(self):

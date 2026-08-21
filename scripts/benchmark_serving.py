@@ -332,6 +332,7 @@ async def run_once(
             max_model_len=args.max_model_len,
             max_num_seqs=args.max_num_seqs,
             max_num_batched_tokens=args.max_num_batched_tokens,
+            prefix_cache_max_blocks=args.prefix_cache_max_blocks,
             gpu_memory_utilization=args.gpu_memory_utilization,
             dtype=args.dtype,
             tensor_parallel_size=args.tensor_parallel_size,
@@ -552,6 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-model-len", type=positive_cli_int, default=8192)
     parser.add_argument("--max-num-seqs", type=positive_cli_int, default=512)
     parser.add_argument("--max-num-batched-tokens", type=positive_cli_int, default=32768)
+    parser.add_argument("--prefix-cache-max-blocks", type=int, default=-1, help="maximum inactive prefix-cache blocks; -1 means all KV blocks")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
     parser.add_argument("--dtype", default="float16", choices=("auto", "float16", "bfloat16", "float32"))
     parser.add_argument("--tensor-parallel-size", type=int, default=1)

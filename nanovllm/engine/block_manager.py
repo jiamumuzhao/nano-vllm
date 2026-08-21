@@ -1,4 +1,4 @@
-from collections import deque
+from collections import OrderedDict, deque
 import xxhash
 import numpy as np
 
@@ -25,12 +25,55 @@ class Block:
 
 class BlockManager:
 
-    def __init__(self, num_blocks: int, block_size: int):
+    def __init__(
+        self,
+        num_blocks: int,
+        block_size: int,
+        prefix_cache_max_blocks: int | None = None,
+    ):
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: dict[int, int] = dict()
         self.free_block_ids: deque[int] = deque(range(num_blocks))
         self.used_block_ids: set[int] = set()
+        if prefix_cache_max_blocks is None:
+            prefix_cache_max_blocks = num_blocks
+        if prefix_cache_max_blocks < 0:
+            raise ValueError("prefix_cache_max_blocks must be non-negative or None")
+        self.prefix_cache_max_blocks = min(prefix_cache_max_blocks, num_blocks)
+        # Only inactive hashed blocks are tracked here. Active blocks remain
+        # protected by ref_count and are never eligible for eviction.
+        self.prefix_cache_lru: OrderedDict[int, None] = OrderedDict()
+        self.prefix_cache_evictions = 0
+
+    @property
+    def prefix_cache_blocks(self) -> int:
+        return len(self.prefix_cache_lru)
+
+    def _uncache_block(self, block_id: int, clear_hash: bool = False):
+        self.prefix_cache_lru.pop(block_id, None)
+        if clear_hash:
+            block = self.blocks[block_id]
+            if block.hash != -1 and self.hash_to_block_id.get(block.hash) == block_id:
+                del self.hash_to_block_id[block.hash]
+            block.hash = -1
+            block.token_ids = []
+
+    def _cache_block(self, block_id: int):
+        block = self.blocks[block_id]
+        if block.ref_count != 0 or block.hash == -1:
+            return
+        self.prefix_cache_lru.pop(block_id, None)
+        self.prefix_cache_lru[block_id] = None
+        while len(self.prefix_cache_lru) > self.prefix_cache_max_blocks:
+            evicted_id, _ = self.prefix_cache_lru.popitem(last=False)
+            evicted = self.blocks[evicted_id]
+            assert evicted.ref_count == 0
+            if evicted.hash != -1 and self.hash_to_block_id.get(evicted.hash) == evicted_id:
+                del self.hash_to_block_id[evicted.hash]
+            evicted.hash = -1
+            evicted.token_ids = []
+            self.prefix_cache_evictions += 1
 
     @classmethod
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):
@@ -44,8 +87,7 @@ class BlockManager:
         block_id = self.free_block_ids.popleft()
         block = self.blocks[block_id]
         assert block.ref_count == 0
-        if block.hash != -1 and self.hash_to_block_id.get(block.hash) == block_id:
-            del self.hash_to_block_id[block.hash]
+        self._uncache_block(block_id, clear_hash=True)
         block.reset()
         self.used_block_ids.add(block_id)
         return block_id
@@ -83,6 +125,7 @@ class BlockManager:
             if block_id in self.used_block_ids:
                 block.ref_count += 1
             else:
+                self._uncache_block(block_id)
                 block.ref_count = 1
                 self.free_block_ids.remove(block_id)
                 self.used_block_ids.add(block_id)
@@ -97,6 +140,7 @@ class BlockManager:
             block.ref_count -= 1
             if block.ref_count == 0:
                 self._deallocate_block(block_id)
+                self._cache_block(block_id)
         seq.num_cached_tokens = 0
         seq.block_table.clear()
 
@@ -116,5 +160,9 @@ class BlockManager:
             block = self.blocks[seq.block_table[i]]
             token_ids = seq.block(i)
             h = self.compute_hash(token_ids, h)
+            if block.hash != -1 and block.hash != h and self.hash_to_block_id.get(block.hash) == block.block_id:
+                del self.hash_to_block_id[block.hash]
             block.update(h, token_ids)
             self.hash_to_block_id[h] = block.block_id
+            if block.ref_count == 0:
+                self._cache_block(block.block_id)

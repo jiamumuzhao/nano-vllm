@@ -22,6 +22,9 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 16
     num_kvcache_blocks: int = -1
+    # Maximum number of inactive prefix-cache blocks retained for reuse.
+    # -1 keeps all available KV blocks eligible for prefix caching.
+    prefix_cache_max_blocks: int = -1
     dtype: str = "auto"
     quantization: str = "none"
     split_kv_enabled: bool = True
@@ -58,6 +61,8 @@ class Config:
                 "and no W8A8 workload has passed the integration gate; "
                 "available production options are 'none' and 'w8a16'"
             )
+        if self.prefix_cache_max_blocks < -1:
+            raise ValueError("prefix_cache_max_blocks must be -1 or non-negative")
         if self.split_kv_threshold < 1:
             raise ValueError("split_kv_threshold must be positive")
         if self.split_kv_partition_size < 1:

@@ -288,6 +288,7 @@ def parse_args():
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--max-num-seqs", type=int, default=512)
     parser.add_argument("--max-num-batched-tokens", type=int, default=32768)
+    parser.add_argument("--prefix-cache-max-blocks", type=int, default=-1, help="maximum inactive prefix-cache blocks; -1 means all KV blocks")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
     parser.add_argument("--dtype", default="float16", choices=("auto", "float16", "bfloat16", "float32"))
     parser.add_argument("--enforce-eager", action="store_true")
@@ -310,6 +311,7 @@ def main():
         max_model_len=args.max_model_len,
         max_num_seqs=args.max_num_seqs,
         max_num_batched_tokens=args.max_num_batched_tokens,
+        prefix_cache_max_blocks=args.prefix_cache_max_blocks,
         gpu_memory_utilization=args.gpu_memory_utilization,
         enforce_eager=args.enforce_eager,
         dtype=args.dtype,
