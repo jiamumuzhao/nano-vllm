@@ -12,6 +12,7 @@ def make_scheduler(max_num_batched_tokens=6, max_num_seqs=2):
         eos=-1,
         num_kvcache_blocks=32,
         kvcache_block_size=4,
+        prefix_cache_max_blocks=-1,
     ))
 
 
@@ -44,3 +45,17 @@ def test_chunked_prefill_fairly_schedules_short_request_behind_long_prompt():
     assert short_seq.status == SequenceStatus.DECODE
     assert list(scheduler.running) == [short_seq]
     assert list(scheduler.waiting) == [long_seq]
+
+
+def test_preempted_sequence_returns_to_queued_state():
+    scheduler = make_scheduler()
+    seq = Sequence([1, 2])
+    scheduler.block_manager.allocate(seq, 0)
+    seq.status = SequenceStatus.DECODE
+
+    scheduler.preempt(seq)
+
+    assert seq.status == SequenceStatus.QUEUED
+    assert seq.is_prefill
+    assert not seq.block_table
+    assert list(scheduler.waiting) == [seq]

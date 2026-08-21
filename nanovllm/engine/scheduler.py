@@ -180,7 +180,7 @@ class Scheduler:
     def preempt(self, seq: Sequence):
         self.preemption_count += 1
         self.preemption_events.append({"seq_id": seq.seq_id, "num_tokens": len(seq), "reason": "kv_capacity"})
-        seq.status = SequenceStatus.PREFILL
+        seq.status = SequenceStatus.QUEUED
         seq.is_prefill = True
         self.block_manager.deallocate(seq)
         self._record_kv_usage()
