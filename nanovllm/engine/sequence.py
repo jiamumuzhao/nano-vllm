@@ -13,9 +13,6 @@ class SequenceStatus(Enum):
     CANCELLED = auto()
     FAILED = auto()
 
-    # Compatibility aliases for the original scheduler terminology.
-    WAITING = QUEUED
-    RUNNING = DECODE
 
 
 class Sequence:

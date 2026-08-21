@@ -41,6 +41,6 @@ def test_chunked_prefill_fairly_schedules_short_request_behind_long_prompt():
     assert scheduled == [long_seq, short_seq]
     assert long_seq.num_scheduled_tokens == 3
     assert short_seq.num_scheduled_tokens == 2
-    assert short_seq.status == SequenceStatus.RUNNING
+    assert short_seq.status == SequenceStatus.DECODE
     assert list(scheduler.running) == [short_seq]
     assert list(scheduler.waiting) == [long_seq]
