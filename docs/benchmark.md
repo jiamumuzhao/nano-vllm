@@ -350,7 +350,7 @@ Reproducible workflow:
   --output-dir docs/benchmarks
 ```
 
-The gate does not run a model or call GPU APIs. Online serving indicators such as TTFT, TPOT, P99 latency, KV usage, cache hit rate, and preemption remain 1.1 work and are not implied by this offline result.
+The offline regression gate does not run a model or call GPU APIs. It does not establish online serving indicators; use `scripts/benchmark_serving.py` for TTFT, TPOT, P99 latency, KV usage, cache hit rate, preemption, and concurrent streaming measurements.
 ## Online AsyncEngine serving benchmark
 
 `scripts/benchmark_serving.py` drives real concurrent `AsyncEngine.generate()` streams. It is

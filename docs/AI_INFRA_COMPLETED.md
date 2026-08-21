@@ -54,7 +54,7 @@ Status: implemented. Cancellation, timeout, backpressure, readiness, full OpenAI
 - [x] **3x3 offline workload matrix**: [docs/benchmarks/offline_matrix_2026-07-12.md](benchmarks/offline_matrix_2026-07-12.md) compares Nano-vLLM eager, Nano-vLLM CUDA Graph, Hugging Face `generate()`, and vLLM across `num_seqs=1,8,16` and `input_len=128,512,2048` with fixed output length, shared prompt token IDs, shared measured seeds, `max_model_len=4096`, and `max_num_batched_tokens=32768`. Eight workloads completed formal four-engine measurement; `input_len=2048,num_seqs=16` is recorded as incomplete because Hugging Face preflight OOMed.
 - [x] **Long-context Nano-vLLM profiling**: [docs/profiling_long_context.md](profiling_long_context.md) and [docs/profiles/long_context_profile_2026-07-12.md](profiles/long_context_profile_2026-07-12.md) record CPU/CUDA profiler evidence for short vs long context in eager and CUDA Graph modes. The phase explains bottlenecks but does not implement optimizations.
 
-Status: default offline baseline evidence, a 3x3 offline matrix, and Nano-vLLM long-context profiler evidence exist. Online latency metrics, larger workload matrices, memory metrics, performance regression gates, and optimized long-context kernels are not complete.
+Status: default offline baseline evidence, a 3x3 offline matrix, Nano-vLLM long-context profiler evidence, and a real concurrent AsyncEngine serving benchmark exist. Online HTTP/network load testing, larger workload matrices, performance regression gates, and optimized long-context kernels are not complete.
 
 ## Documentation phase completed
 
@@ -63,7 +63,7 @@ Status: default offline baseline evidence, a 3x3 offline matrix, and Nano-vLLM l
 - [x] **Benchmark evidence document**: [docs/benchmark.md](benchmark.md) separates measured results from unmeasured gaps and defines a future benchmark protocol.
 - [x] **Roadmap alignment**: [OPTIMIZATION_ROADMAP.md](../OPTIMIZATION_ROADMAP.md) now marks paged attention, AsyncEngine, OpenAI-style API, and SSE as completed while leaving quantization, observability, strict comparisons, and multi-model support as future work.
 
-The second phase added real single-workload offline benchmark measurements. The third phase added a 3x3 offline workload matrix, with one heaviest workload recorded as incomplete due to Hugging Face OOM. The fourth phase added Nano-vLLM long-context profiling and bottleneck analysis. These phases did not add online serving latency metrics or kernel optimizations.
+The second phase added real single-workload offline benchmark measurements. The third phase added a 3x3 offline workload matrix, with one heaviest workload recorded as incomplete due to Hugging Face OOM. The fourth phase added Nano-vLLM long-context profiling and bottleneck analysis. The serving phase added `scripts/benchmark_serving.py` with concurrent AsyncEngine streams, request-level TTFT/TPOT/E2E measurements, service metrics snapshots, KV preflight diagnostics, and JSONL/Markdown output. These phases did not add HTTP/network load testing or kernel optimizations.
 
 ## Tracking rule
 

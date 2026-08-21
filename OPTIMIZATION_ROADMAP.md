@@ -28,7 +28,7 @@ The following items are implemented and tracked in [docs/AI_INFRA_COMPLETED.md](
 
 - [x] Build a repeatable offline benchmark protocol that records raw JSONL results, environment metadata, git revision, workload, and summary statistics. Online serving protocol remains future work.
 - [x] Run same-condition offline comparisons against Hugging Face `generate()` and vLLM. Claims must use the same model, dtype, hardware, prompt/output lengths, sampling parameters, tensor parallel size, and batch constraints. The current matrix has one incomplete workload because Hugging Face preflight OOMed.
-- [ ] Add online serving benchmarks with TTFT, TPOT, P50/P95/P99 latency, throughput, memory, queue length, prefix-cache hit rate, and preemption count.
+- [x] Add online AsyncEngine serving benchmarks with TTFT, TPOT, P50/P95/P99 latency, end-to-end latency, global output throughput, CUDA memory, KV usage, prefix-cache hit rate, preemption count, request states, and cleanup diagnostics. The benchmark writes raw JSONL and Markdown; HTTP/network load testing remains future work.
 - [ ] Expand correctness tests across all context lengths, block sizes, GQA ratios, head dimensions, batch sizes, prefix cache reuse, chunked prefill, preemption, CUDA Graph, and tensor parallel execution. Core attention and scheduler coverage exists, but the matrix is not complete.
 - [ ] Add Transformers alignment beyond sampled prefill logits, including greedy or controlled-token generation once deterministic sampling support exists.
 
