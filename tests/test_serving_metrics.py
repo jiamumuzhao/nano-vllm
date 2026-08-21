@@ -17,6 +17,7 @@ from benchmark_serving import (
     percentile,
     parse_csv_ints,
     timing_summary,
+    validate_workload_capacity,
 )
 from nanovllm.engine.async_engine import AsyncEngine
 from nanovllm.engine.scheduler import Scheduler
@@ -231,6 +232,17 @@ def test_preflight_passed_runtime_allocation_failure_has_no_metrics(monkeypatch)
 def test_csv_parser_rejects_empty_negative_duplicate_and_invalid_values(raw):
     with pytest.raises(ValueError):
         parse_csv_ints(raw, "concurrencies")
+
+
+def test_workload_capacity_validation_covers_generated_tokens_and_block_alignment():
+    assert validate_workload_capacity(4096, [128, 2048], [64]) == {
+        "required_model_len": 2112, "aligned_required_model_len": 2112,
+    }
+    with pytest.raises(ValueError, match="too small.*use at least 2112"):
+        validate_workload_capacity(2048, [2048], [64])
+    with pytest.raises(ValueError, match="divisible.*use at least 2112"):
+        validate_workload_capacity(2114, [2048], [64])
+
 
 
 def test_cli_parser_rejects_invalid_capacity_values():

@@ -51,6 +51,22 @@ def parse_csv_ints(raw: str, name: str) -> list[int]:
     return values
 
 
+def validate_workload_capacity(max_model_len: int, input_lens: list[int], output_lens: list[int], block_size: int = 16) -> dict[str, int]:
+    """Validate that every workload fits prompt plus generated tokens and KV blocks."""
+    if max_model_len <= 0 or block_size <= 0:
+        raise ValueError("max_model_len and block_size must be positive")
+    if not input_lens or not output_lens:
+        raise ValueError("input_lens and output_lens must not be empty")
+    required = max(input_len + output_len for input_len in input_lens for output_len in output_lens)
+    aligned_required = math.ceil(required / block_size) * block_size
+    if max_model_len < required:
+        raise ValueError(f"max_model_len={max_model_len} is too small for the largest workload ({required} tokens); use at least {aligned_required}")
+    if max_model_len % block_size:
+        raise ValueError(f"max_model_len={max_model_len} must be divisible by KV block size {block_size}; use at least {aligned_required}")
+    return {"required_model_len": required, "aligned_required_model_len": aligned_required}
+
+
+
 def parse_ratio(raw: str) -> float:
     try:
         value = float(raw)
@@ -560,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("runs must be positive and warmup-runs must be non-negative")
         if args.max_model_len <= 0 or args.max_num_seqs <= 0 or args.max_num_batched_tokens <= 0:
             raise ValueError("model and scheduler capacities must be positive")
+        validate_workload_capacity(args.max_model_len, args.input_lens, args.output_lens)
     except ValueError as exc:
         parser.error(str(exc))
     args._command = [sys.executable, "scripts/benchmark_serving.py", *(argv if argv is not None else sys.argv[1:])]
