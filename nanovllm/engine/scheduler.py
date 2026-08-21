@@ -20,6 +20,9 @@ class Scheduler:
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
         self._sequences: dict[int, Sequence] = {}
+        self._sequence_meta: dict[int, dict[str, int]] = {}
+        self._arrival_counter = 0
+        self._scheduler_step = 0
         # Read-only diagnostics for GPU E2E regression evidence. These do not
         # affect scheduling decisions or normal execution semantics.
         self.preemption_count = 0
@@ -39,11 +42,17 @@ class Scheduler:
         """Return read-only scheduler/KV diagnostics without changing scheduling."""
         total = len(self.block_manager.blocks)
         used = len(self.block_manager.used_block_ids)
+        prefix_cache_blocks = getattr(self.block_manager, "prefix_cache_blocks", 0)
+        prefix_cache_max_blocks = getattr(self.block_manager, "prefix_cache_max_blocks", total)
+        prefix_cache_evictions = getattr(self.block_manager, "prefix_cache_evictions", 0)
         requests = self.prefix_cache_requests
         prompt_tokens = self.prefix_cache_prompt_tokens
         return {
             "kv_blocks_total": total,
             "kv_blocks_used": used,
+            "kv_blocks_free": len(self.block_manager.free_block_ids),
+            "kv_plain_blocks_free": getattr(self.block_manager, "free_plain_blocks", 0),
+            "kv_cached_blocks_free": getattr(self.block_manager, "free_cached_blocks", 0),
             "kv_blocks_peak_used": self.kv_blocks_peak_used,
             "kv_usage_peak_ratio": self.kv_blocks_peak_used / total if total else 0.0,
             "preemption_count": self.preemption_count,
@@ -52,20 +61,70 @@ class Scheduler:
             "prefix_cache_cached_tokens": self.prefix_cache_cached_tokens,
             "prefix_cache_hit_rate": self.prefix_cache_hit_requests / requests if requests else 0.0,
             "prefix_cache_token_hit_rate": self.prefix_cache_cached_tokens / prompt_tokens if prompt_tokens else 0.0,
-            "prefix_cache_blocks": self.block_manager.prefix_cache_blocks,
-            "prefix_cache_max_blocks": self.block_manager.prefix_cache_max_blocks,
+            "prefix_cache_blocks": prefix_cache_blocks,
+            "prefix_cache_max_blocks": prefix_cache_max_blocks,
             "prefix_cache_usage_ratio": (
-                self.block_manager.prefix_cache_blocks / self.block_manager.prefix_cache_max_blocks
-                if self.block_manager.prefix_cache_max_blocks else 0.0
+                prefix_cache_blocks / prefix_cache_max_blocks
+                if prefix_cache_max_blocks else 0.0
             ),
-            "prefix_cache_evictions": self.block_manager.prefix_cache_evictions,
+            "prefix_cache_evictions": prefix_cache_evictions,
         }
 
     def is_finished(self):
         return not self.waiting and not self.running
 
+    def _meta(self, seq: Sequence) -> dict[str, int]:
+        return self._sequence_meta.setdefault(seq.seq_id, {
+            "arrival_order": self._arrival_counter,
+            "queued_step": self._scheduler_step,
+            "admitted_step": self._scheduler_step,
+            "preemption_count": 0,
+        })
+
+    def _pop_waiting(self) -> Sequence:
+        # Aging: the longest-waiting request gets the next admission. This
+        # prevents preempted requests or new arrivals from being starved by
+        # append-left ordering.
+        seq = min(
+            self.waiting,
+            key=lambda item: (
+                self._meta(item)["queued_step"],
+                self._meta(item)["arrival_order"],
+            ),
+        )
+        self.waiting.remove(seq)
+        return seq
+
+    def _select_preemption_victim(self, current: Sequence) -> Sequence | None:
+        candidates = list(self.running)
+        if not candidates:
+            return None
+        # Prefer a request that has not already been preempted, is newer
+        # (less recomputation progress to discard), and releases more blocks.
+        # The preemption count is first to prevent repeatedly preempting the
+        # same request; block footprint is a capacity-aware tie breaker.
+        return max(
+            candidates,
+            key=lambda seq: (
+                -self._meta(seq)["preemption_count"],
+                -(
+                    self._scheduler_step
+                    - self._meta(seq)["admitted_step"]
+                ),
+                len(seq.block_table),
+                -self._meta(seq)["arrival_order"],
+            ),
+        )
+
     def add(self, seq: Sequence):
         seq.status = SequenceStatus.QUEUED
+        self._sequence_meta[seq.seq_id] = {
+            "arrival_order": self._arrival_counter,
+            "queued_step": self._scheduler_step,
+            "admitted_step": self._scheduler_step,
+            "preemption_count": 0,
+        }
+        self._arrival_counter += 1
         self.waiting.append(seq)
         self._sequences[seq.seq_id] = seq
 
@@ -100,6 +159,7 @@ class Scheduler:
         return True
 
     def schedule(self) -> tuple[list[Sequence], bool]:
+        self._scheduler_step += 1
         scheduled_seqs = []
         num_batched_tokens = 0
 
@@ -114,7 +174,8 @@ class Scheduler:
 
             seq_slots = min(num_waiting, self.max_num_seqs - len(scheduled_seqs))
             token_budget = max(1, remaining // seq_slots)
-            seq = self.waiting.popleft()
+            seq = self._pop_waiting()
+            self._meta(seq)["admitted_step"] = self._scheduler_step
             num_waiting -= 1
 
             if not seq.block_table:
@@ -161,8 +222,10 @@ class Scheduler:
         while self.running and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.running.popleft()
             while not self.block_manager.can_append(seq):
-                if self.running:
-                    self.preempt(self.running.pop())
+                victim = self._select_preemption_victim(seq)
+                if victim is not None:
+                    self.running.remove(victim)
+                    self.preempt(victim)
                 else:
                     self.preempt(seq)
                     break
@@ -178,13 +241,22 @@ class Scheduler:
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
+        meta = self._meta(seq)
+        meta["preemption_count"] += 1
+        meta["queued_step"] = self._scheduler_step
         self.preemption_count += 1
-        self.preemption_events.append({"seq_id": seq.seq_id, "num_tokens": len(seq), "reason": "kv_capacity"})
+        self.preemption_events.append({
+            "seq_id": seq.seq_id,
+            "num_tokens": len(seq),
+            "kv_blocks": len(seq.block_table),
+            "preemption_count": meta["preemption_count"],
+            "reason": "kv_capacity",
+        })
         seq.status = SequenceStatus.QUEUED
         seq.is_prefill = True
         self.block_manager.deallocate(seq)
         self._record_kv_usage()
-        self.waiting.appendleft(seq)
+        self.waiting.append(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         token_events = []

@@ -59,3 +59,47 @@ def test_preempted_sequence_returns_to_queued_state():
     assert seq.is_prefill
     assert not seq.block_table
     assert list(scheduler.waiting) == [seq]
+
+
+def test_preemption_prefers_newer_request_with_larger_kv_footprint():
+    scheduler = make_scheduler()
+    older = Sequence([1, 2, 3, 4])
+    newer = Sequence(list(range(12)))
+    scheduler.block_manager.allocate(older, 0)
+    scheduler.block_manager.allocate(newer, 0)
+    scheduler.running.extend([older, newer])
+    scheduler._sequence_meta[older.seq_id] = {
+        "arrival_order": 0,
+        "queued_step": 0,
+        "admitted_step": 1,
+        "preemption_count": 0,
+    }
+    scheduler._sequence_meta[newer.seq_id] = {
+        "arrival_order": 1,
+        "queued_step": 0,
+        "admitted_step": 3,
+        "preemption_count": 0,
+    }
+
+    assert scheduler._select_preemption_victim(older) is newer
+
+
+def test_preemption_protects_a_previously_preempted_request():
+    scheduler = make_scheduler()
+    first = Sequence([1, 2, 3, 4])
+    second = Sequence([5, 6, 7, 8])
+    scheduler.running.extend([first, second])
+    scheduler._sequence_meta[first.seq_id] = {
+        "arrival_order": 0,
+        "queued_step": 0,
+        "admitted_step": 4,
+        "preemption_count": 1,
+    }
+    scheduler._sequence_meta[second.seq_id] = {
+        "arrival_order": 1,
+        "queued_step": 0,
+        "admitted_step": 4,
+        "preemption_count": 0,
+    }
+
+    assert scheduler._select_preemption_victim(first) is second

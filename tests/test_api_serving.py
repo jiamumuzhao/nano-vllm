@@ -239,3 +239,17 @@ def test_schema_validation_errors_are_422_not_500():
             response = client.post(path, json=payload)
             assert response.status_code == 422
             assert response.status_code != 500
+
+
+def test_prometheus_metrics_endpoint_exposes_service_and_kv_metrics():
+    engine = FakeAsyncEngine()
+    app = create_app(engine, "fake-model")
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+        assert response.status_code == 200
+        assert "text/plain" in response.headers["content-type"]
+        body = response.text
+        assert "nanovllm_active_requests" in body
+        assert "nanovllm_requests_total" in body
+        assert "nanovllm_kv_blocks_used" in body
+        assert "# TYPE nanovllm_requests_total counter" in body

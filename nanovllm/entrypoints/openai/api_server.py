@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from nanovllm.engine.async_engine import AsyncEngine, QueueFullError
@@ -35,6 +35,86 @@ class ChatCompletionRequest(BaseModel):
     ignore_eos: bool = False
 
 
+def _prometheus_text(engine: AsyncEngine) -> str:
+    snapshot = {}
+    getter = getattr(engine, "get_metrics_snapshot", None)
+    if callable(getter):
+        snapshot = getter() or {}
+    scheduler = snapshot.get("scheduler", {})
+    lines: list[str] = []
+
+    # Keep exposition generation dependency-free. Values are numeric and names
+    # are fixed, so no label escaping or user-controlled metric names are used.
+    def add_number(name: str, metric_type: str, help_text: str, value):
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {metric_type}")
+        lines.append(f"{name} {float(value)}")
+
+    gauges = {
+        "active_requests": "Active requests",
+        "queued_requests": "Queued requests",
+        "prefill_requests": "Requests in prefill",
+        "decode_requests": "Requests in decode",
+        "finished_requests": "Finished requests",
+        "cancelled_requests": "Cancelled requests",
+        "failed_requests": "Failed requests",
+        "intake_queue_length": "Requests waiting in the intake queue",
+        "engine_unavailable": "Whether the engine is unavailable (1 or 0)",
+    }
+    for key, help_text in gauges.items():
+        add_number(f"nanovllm_{key}", "gauge", help_text, snapshot.get(key, 0))
+
+    scheduler_gauges = {
+        "kv_blocks_total": "Total KV cache blocks",
+        "kv_blocks_used": "Used KV cache blocks",
+        "kv_blocks_free": "Free KV cache blocks",
+        "kv_plain_blocks_free": "Free non-cached KV blocks",
+        "kv_cached_blocks_free": "Free Prefix Cache blocks",
+        "kv_blocks_peak_used": "Peak used KV cache blocks",
+        "kv_usage_peak_ratio": "Peak KV cache usage ratio",
+        "prefix_cache_blocks": "Inactive Prefix Cache blocks",
+        "prefix_cache_max_blocks": "Prefix Cache capacity in blocks",
+        "prefix_cache_usage_ratio": "Prefix Cache capacity usage ratio",
+    }
+    for key, help_text in scheduler_gauges.items():
+        add_number(f"nanovllm_{key}", "gauge", help_text, scheduler.get(key, 0))
+
+    counters = {
+        "requests_total": "Total accepted requests",
+        "requests_finished_total": "Total successfully finished requests",
+        "requests_cancelled_total": "Total cancelled requests",
+        "requests_failed_total": "Total failed requests",
+        "prompt_tokens_total": "Total prompt tokens accepted",
+        "generation_tokens_total": "Total generated tokens",
+        "first_tokens_total": "Total requests that emitted a first token",
+        "preemption_count": "Total request preemptions",
+        "prefix_cache_requests": "Total Prefix Cache queries",
+        "prefix_cache_hit_requests": "Total requests with Prefix Cache hits",
+        "prefix_cache_evictions": "Total Prefix Cache block evictions",
+    }
+    for key, help_text in counters.items():
+        value = snapshot.get(key, scheduler.get(key, 0))
+        add_number(f"nanovllm_{key}", "counter", help_text, value)
+
+    summaries = {
+        "ttft_seconds": "Time to first token in seconds",
+        "e2e_request_seconds": "End-to-end request latency in seconds",
+    }
+    for key, help_text in summaries.items():
+        base = f"nanovllm_{key}"
+        add_number(f"{base}_sum", "summary", f"{help_text} sum", snapshot.get(f"{key}_sum", 0.0))
+        add_number(f"{base}_count", "summary", f"{help_text} count", snapshot.get(f"{key}_count", 0))
+
+    gauges_rate = {
+        "prefix_cache_hit_rate": "Prefix Cache request hit rate",
+        "prefix_cache_token_hit_rate": "Prefix Cache token hit rate",
+    }
+    for key, help_text in gauges_rate.items():
+        add_number(f"nanovllm_{key}", "gauge", help_text, scheduler.get(key, 0.0))
+
+    return "\n".join(lines) + "\n"
+
+
 def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
     app = FastAPI(title="Nano-vLLM OpenAI-compatible API")
     app.state.engine = engine
@@ -51,6 +131,13 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    async def metrics():
+        return Response(
+            content=_prometheus_text(app.state.engine),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.get("/v1/models")
     async def models():

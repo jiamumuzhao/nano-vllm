@@ -47,6 +47,11 @@ class _RequestState:
     finish_reason: str | None = None
     deadline: float = 0.0
     error: str | None = None
+    created_at: float = 0.0
+    first_token_at: float | None = None
+    completed_at: float | None = None
+    prompt_tokens: int = 0
+    metrics_recorded: bool = False
     terminal_emitted: bool = False
 
 
@@ -64,6 +69,23 @@ class AsyncEngine:
         self._seq_to_request: dict[int, str] = {}
         self._closed = False
         self._engine_error: str | None = None
+        self._metric_counters = {
+            "requests_total": 0,
+            "requests_finished_total": 0,
+            "requests_cancelled_total": 0,
+            "requests_failed_total": 0,
+            "prompt_tokens_total": 0,
+            "generation_tokens_total": 0,
+            "first_tokens_total": 0,
+        }
+        self._metric_sums = {
+            "ttft_seconds": 0.0,
+            "e2e_request_seconds": 0.0,
+        }
+        self._metric_counts = {
+            "ttft_seconds": 0,
+            "e2e_request_seconds": 0,
+        }
         self._runner_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -114,6 +136,34 @@ class AsyncEngine:
             "error": state.error,
         }
 
+    def _record_first_token(self, state: _RequestState):
+        if state.first_token_at is not None:
+            return
+        state.first_token_at = monotonic()
+        self._metric_counters["first_tokens_total"] += 1
+        ttft = state.first_token_at - state.created_at
+        if math.isfinite(ttft) and ttft >= 0:
+            self._metric_sums["ttft_seconds"] += ttft
+            self._metric_counts["ttft_seconds"] += 1
+
+    def _record_terminal_metrics(self, state: _RequestState):
+        if state.metrics_recorded:
+            return
+        state.metrics_recorded = True
+        state.completed_at = monotonic()
+        self._metric_counters["prompt_tokens_total"] += state.prompt_tokens
+        self._metric_counters["generation_tokens_total"] += len(state.token_ids)
+        if state.status == "finished":
+            self._metric_counters["requests_finished_total"] += 1
+        elif state.status == "cancelled":
+            self._metric_counters["requests_cancelled_total"] += 1
+        elif state.status == "failed":
+            self._metric_counters["requests_failed_total"] += 1
+        e2e = state.completed_at - state.created_at
+        if math.isfinite(e2e) and e2e >= 0:
+            self._metric_sums["e2e_request_seconds"] += e2e
+            self._metric_counts["e2e_request_seconds"] += 1
+
     def get_metrics_snapshot(self) -> dict:
         """Return read-only service metrics for external observers/benchmarks."""
         scheduler = getattr(self.engine, "scheduler", None)
@@ -139,6 +189,9 @@ class AsyncEngine:
         for state in self._states.values():
             if state.status in counts:
                 counts[state.status] += 1
+        metric_counters = getattr(self, "_metric_counters", {})
+        metric_sums = getattr(self, "_metric_sums", {})
+        metric_counts = getattr(self, "_metric_counts", {})
         return {
             "scheduler": scheduler_metrics,
             "active_requests": sum(counts[s] for s in REQUEST_STATUSES - TERMINAL_STATUSES),
@@ -152,6 +205,18 @@ class AsyncEngine:
             "max_queue_size": self.max_queue_size,
             "stream_queue_size": self.stream_queue_size,
             "request_timeout_s": self.request_timeout_s,
+            "engine_unavailable": int(getattr(self, "_engine_error", None) is not None),
+            "requests_total": metric_counters.get("requests_total", 0),
+            "requests_finished_total": metric_counters.get("requests_finished_total", 0),
+            "requests_cancelled_total": metric_counters.get("requests_cancelled_total", 0),
+            "requests_failed_total": metric_counters.get("requests_failed_total", 0),
+            "prompt_tokens_total": metric_counters.get("prompt_tokens_total", 0),
+            "generation_tokens_total": metric_counters.get("generation_tokens_total", 0),
+            "first_tokens_total": metric_counters.get("first_tokens_total", 0),
+            "ttft_seconds_sum": metric_sums.get("ttft_seconds", 0.0),
+            "ttft_seconds_count": metric_counts.get("ttft_seconds", 0),
+            "e2e_request_seconds_sum": metric_sums.get("e2e_request_seconds", 0.0),
+            "e2e_request_seconds_count": metric_counts.get("e2e_request_seconds", 0),
         }
 
     async def shutdown(self):
@@ -189,8 +254,10 @@ class AsyncEngine:
             state = _RequestState(
                 request_id=request_id,
                 queue=asyncio.Queue(maxsize=self.stream_queue_size),
+                created_at=monotonic(),
                 deadline=monotonic() + self.request_timeout_s,
             )
+            self._metric_counters["requests_total"] += 1
             self._states[request_id] = state
             await self._new_requests.put((prompt, sampling_params, state))
         try:
@@ -265,6 +332,7 @@ class AsyncEngine:
         state.status = status
         state.finish_reason = reason
         state.error = error
+        self._record_terminal_metrics(state)
         if state.seq_id is not None:
             self._streams.pop(state.seq_id, None)
             self._seq_to_request.pop(state.seq_id, None)
@@ -328,6 +396,7 @@ class AsyncEngine:
                     if state is None or state.status in {"cancelled", "failed"}:
                         continue
                     try:
+                        self._record_first_token(state)
                         state.token_ids.append(token_id)
                         text = self.engine.tokenizer.decode(state.token_ids)
                         delta_text = text[len(state.text):]
@@ -335,6 +404,7 @@ class AsyncEngine:
                         if finished:
                             state.finish_reason = "stop"
                             state.status = "finished"
+                            self._record_terminal_metrics(state)
                             terminal = RequestOutput(
                                 request_id=state.request_id, text=state.text,
                                 token_ids=list(state.token_ids), delta_text=delta_text,
@@ -376,6 +446,11 @@ class AsyncEngine:
             if state.status in TERMINAL_STATUSES:
                 continue
             try:
+                state.prompt_tokens = (
+                    len(prompt)
+                    if isinstance(prompt, list)
+                    else len(self.engine.tokenizer.encode(prompt))
+                )
                 seq_id = self.engine.add_request(prompt, sampling_params)
                 state.seq_id = seq_id
                 self._streams[seq_id] = state

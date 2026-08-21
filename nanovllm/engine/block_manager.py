@@ -34,7 +34,10 @@ class BlockManager:
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: dict[int, int] = dict()
+        # free_block_ids is kept as a compatibility view of all free blocks.
+        # Allocation uses the two typed queues below to prefer clean blocks.
         self.free_block_ids: deque[int] = deque(range(num_blocks))
+        self.free_plain_block_ids: deque[int] = deque(range(num_blocks))
         self.used_block_ids: set[int] = set()
         if prefix_cache_max_blocks is None:
             prefix_cache_max_blocks = num_blocks
@@ -49,6 +52,27 @@ class BlockManager:
     @property
     def prefix_cache_blocks(self) -> int:
         return len(self.prefix_cache_lru)
+
+    @property
+    def free_plain_blocks(self) -> int:
+        return len(self.free_plain_block_ids)
+
+    @property
+    def free_cached_blocks(self) -> int:
+        return len(self.prefix_cache_lru)
+
+    def check_free_block_invariants(self) -> bool:
+        'Validate the relationship between free queues and cache metadata.'
+        free_ids = set(self.free_block_ids)
+        plain_ids = set(self.free_plain_block_ids)
+        cached_ids = set(self.prefix_cache_lru)
+        assert not free_ids & set(self.used_block_ids)
+        assert not plain_ids & cached_ids
+        assert free_ids == plain_ids | cached_ids
+        assert all(self.blocks[block_id].ref_count == 0 for block_id in free_ids)
+        assert all(self.blocks[block_id].hash == -1 for block_id in plain_ids)
+        assert all(self.blocks[block_id].hash != -1 for block_id in cached_ids)
+        return True
 
     def _uncache_block(self, block_id: int, clear_hash: bool = False):
         self.prefix_cache_lru.pop(block_id, None)
@@ -73,6 +97,9 @@ class BlockManager:
                 del self.hash_to_block_id[evicted.hash]
             evicted.hash = -1
             evicted.token_ids = []
+            # The block remains free, but is now a plain free block rather
+            # than a cached block eligible for prefix reuse.
+            self.free_plain_block_ids.append(evicted_id)
             self.prefix_cache_evictions += 1
 
     @classmethod
@@ -84,10 +111,20 @@ class BlockManager:
         return h.intdigest()
 
     def _allocate_block(self) -> int:
-        block_id = self.free_block_ids.popleft()
+        if self.free_plain_block_ids:
+            block_id = self.free_plain_block_ids.popleft()
+            self.free_block_ids.remove(block_id)
+        else:
+            if not self.prefix_cache_lru:
+                raise RuntimeError("no free KV blocks available")
+            # The LRU queue is the fallback only after all plain blocks are
+            # exhausted. Remove the cache metadata before reusing the block.
+            block_id = next(iter(self.prefix_cache_lru))
+            self._uncache_block(block_id, clear_hash=True)
+            self.free_block_ids.remove(block_id)
+            self.prefix_cache_evictions += 1
         block = self.blocks[block_id]
         assert block.ref_count == 0
-        self._uncache_block(block_id, clear_hash=True)
         block.reset()
         self.used_block_ids.add(block_id)
         return block_id
@@ -96,6 +133,8 @@ class BlockManager:
         assert self.blocks[block_id].ref_count == 0
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
+        if self.blocks[block_id].hash == -1:
+            self.free_plain_block_ids.append(block_id)
 
     def can_allocate(self, seq: Sequence) -> int:
         h = -1
@@ -128,6 +167,8 @@ class BlockManager:
                 self._uncache_block(block_id)
                 block.ref_count = 1
                 self.free_block_ids.remove(block_id)
+                if block_id in self.free_plain_block_ids:
+                    self.free_plain_block_ids.remove(block_id)
                 self.used_block_ids.add(block_id)
             seq.block_table.append(block_id)
         for i in range(num_cached_blocks, seq.num_blocks):

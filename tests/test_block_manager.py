@@ -71,3 +71,46 @@ def test_prefix_cache_capacity_does_not_evict_active_blocks():
     assert manager.hash_to_block_id[active_hash] == active.block_table[0]
     assert cached_hash in manager.hash_to_block_id
     manager.deallocate(active)
+
+
+def test_allocates_plain_free_blocks_before_cached_lru_blocks():
+    manager = BlockManager(num_blocks=3, block_size=256, prefix_cache_max_blocks=3)
+    cached = cache_sequence(manager, list(range(300)))
+    cached_block_id = cached.block_table[0]
+    manager.deallocate(cached)
+
+    plain = make_sequence(list(range(1000, 1256)))
+    assert manager.can_allocate(plain) == 0
+    manager.allocate(plain, 0)
+
+    assert plain.block_table[0] != cached_block_id
+    assert cached_block_id in manager.hash_to_block_id
+    manager.deallocate(plain)
+
+    # Consume every ordinary free block while the cached block remains idle.
+    plain_a = make_sequence(list(range(2000, 2256)))
+    plain_b = make_sequence(list(range(3000, 3256)))
+    manager.allocate(plain_a, 0)
+    manager.allocate(plain_b, 0)
+    assert manager.free_plain_blocks == 0
+
+    fallback = make_sequence(list(range(4000, 4256)))
+    manager.allocate(fallback, 0)
+    assert fallback.block_table[0] == cached_block_id
+    assert cached_block_id not in manager.hash_to_block_id
+
+
+def test_free_queue_and_cache_invariants_hold_after_eviction():
+    manager = BlockManager(num_blocks=3, block_size=256, prefix_cache_max_blocks=1)
+    first = cache_sequence(manager, list(range(300)))
+    manager.deallocate(first)
+    assert manager.check_free_block_invariants()
+
+    second = cache_sequence(manager, list(range(1000, 1300)))
+    manager.deallocate(second)
+    assert manager.check_free_block_invariants()
+    assert manager.prefix_cache_blocks == 1
+
+    third = make_sequence(list(range(2000, 2256)))
+    manager.allocate(third, 0)
+    assert manager.check_free_block_invariants()
