@@ -5,6 +5,34 @@ import numpy as np
 from nanovllm.engine.sequence import Sequence
 
 
+class IndexedDeque:
+    """Deque-like ordered set with O(1) append, pop-left, and remove."""
+
+    def __init__(self, values=()):
+        self._items: OrderedDict[int, None] = OrderedDict()
+        for value in values:
+            self._items[value] = None
+
+    def append(self, value: int):
+        self._items[value] = None
+
+    def popleft(self) -> int:
+        value, _ = self._items.popitem(last=False)
+        return value
+
+    def remove(self, value: int):
+        del self._items[value]
+
+    def __contains__(self, value: int) -> bool:
+        return value in self._items
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
 class Block:
 
     def __init__(self, block_id):
@@ -36,8 +64,8 @@ class BlockManager:
         self.hash_to_block_id: dict[int, int] = dict()
         # free_block_ids is kept as a compatibility view of all free blocks.
         # Allocation uses the two typed queues below to prefer clean blocks.
-        self.free_block_ids: deque[int] = deque(range(num_blocks))
-        self.free_plain_block_ids: deque[int] = deque(range(num_blocks))
+        self.free_block_ids = IndexedDeque(range(num_blocks))
+        self.free_plain_block_ids = IndexedDeque(range(num_blocks))
         self.used_block_ids: set[int] = set()
         if prefix_cache_max_blocks is None:
             prefix_cache_max_blocks = num_blocks
@@ -73,6 +101,27 @@ class BlockManager:
         assert all(self.blocks[block_id].hash == -1 for block_id in plain_ids)
         assert all(self.blocks[block_id].hash != -1 for block_id in cached_ids)
         return True
+
+    def _sync_free_queues(self):
+        # Keep compatibility with tests/tools that replace free_block_ids with
+        # a regular deque to simulate a smaller KV pool. Normal execution
+        # remains O(1) because this branch is skipped.
+        if isinstance(self.free_block_ids, IndexedDeque):
+            return
+        free_ids = set(self.free_block_ids)
+        self.free_block_ids = IndexedDeque(free_ids)
+        cached_ids = OrderedDict()
+        for block_id in self.prefix_cache_lru:
+            if block_id in free_ids and self.blocks[block_id].hash != -1:
+                cached_ids[block_id] = None
+        for block_id in free_ids:
+            if self.blocks[block_id].hash != -1 and block_id not in cached_ids:
+                cached_ids[block_id] = None
+        self.prefix_cache_lru = cached_ids
+        self.free_plain_block_ids = IndexedDeque(
+            block_id for block_id in free_ids
+            if block_id not in cached_ids and self.blocks[block_id].hash == -1
+        )
 
     def _uncache_block(self, block_id: int, clear_hash: bool = False):
         self.prefix_cache_lru.pop(block_id, None)
@@ -110,7 +159,24 @@ class BlockManager:
         h.update(np.array(token_ids).tobytes())
         return h.intdigest()
 
+    def count_cached_prefix_blocks(self, token_ids: list[int]) -> int:
+        """Count complete prompt blocks reusable without a new KV allocation."""
+        num_blocks = (len(token_ids) + self.block_size - 1) // self.block_size
+        cached = 0
+        prefix_hash = -1
+        for index in range(max(0, num_blocks - 1)):
+            block_tokens = token_ids[
+                index * self.block_size:(index + 1) * self.block_size
+            ]
+            prefix_hash = self.compute_hash(block_tokens, prefix_hash)
+            block_id = self.hash_to_block_id.get(prefix_hash, -1)
+            if block_id == -1 or self.blocks[block_id].token_ids != block_tokens:
+                break
+            cached += 1
+        return cached
+
     def _allocate_block(self) -> int:
+        self._sync_free_queues()
         if self.free_plain_block_ids:
             block_id = self.free_plain_block_ids.popleft()
             self.free_block_ids.remove(block_id)
@@ -137,6 +203,7 @@ class BlockManager:
             self.free_plain_block_ids.append(block_id)
 
     def can_allocate(self, seq: Sequence) -> int:
+        self._sync_free_queues()
         h = -1
         num_cached_blocks = 0
         num_new_blocks = seq.num_blocks
@@ -154,6 +221,7 @@ class BlockManager:
         return num_cached_blocks
 
     def allocate(self, seq: Sequence, num_cached_blocks: int):
+        self._sync_free_queues()
         assert not seq.block_table
         h = -1
         for i in range(num_cached_blocks):
@@ -173,6 +241,7 @@ class BlockManager:
             seq.block_table.append(block_id)
         for i in range(num_cached_blocks, seq.num_blocks):
             seq.block_table.append(self._allocate_block())
+            seq.block_table_version += 1
         seq.num_cached_tokens = num_cached_blocks * self.block_size
 
     def deallocate(self, seq: Sequence):
@@ -184,13 +253,16 @@ class BlockManager:
                 self._cache_block(block_id)
         seq.num_cached_tokens = 0
         seq.block_table.clear()
+        seq.block_table_version += 1
 
     def can_append(self, seq: Sequence) -> bool:
+        self._sync_free_queues()
         return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
 
     def may_append(self, seq: Sequence):
         if len(seq) % self.block_size == 1:
             seq.block_table.append(self._allocate_block())
+            seq.block_table_version += 1
 
     def hash_blocks(self, seq: Sequence):
         start = seq.num_cached_tokens // self.block_size

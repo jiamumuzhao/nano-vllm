@@ -42,10 +42,10 @@ The following items are implemented and tracked in [docs/AI_INFRA_COMPLETED.md](
 
 ## P1: Scheduling and KV cache
 
-- [ ] Add configurable scheduling policies such as FCFS, priority, deadline-aware, or throughput-oriented modes.
-- [ ] Improve preemption policy to avoid repeated recompute under memory pressure.
+- [x] Add configurable FCFS, throughput-oriented, and latency-oriented scheduling policies.
+- [x] Improve preemption policy with cooldown, per-step limits, victim filtering, and recompute metrics.
 - [ ] Add prefix-cache capacity control and eviction, such as LRU for inactive hashed blocks.
-- [ ] Add admission control based on remaining KV blocks and token budget.
+- [x] Add admission control based on remaining KV blocks, model length, and token budget.
 - [ ] Evaluate CPU/GPU KV swapping as a future alternative to recompute-on-preemption.
 
 ## P1: Kernels and execution
@@ -60,7 +60,7 @@ The following items are implemented and tracked in [docs/AI_INFRA_COMPLETED.md](
 
 - [ ] Add `/metrics`, `/health`, and `/ready` with distinct liveness/readiness semantics. `/health` and internal read-only metrics snapshots exist; Prometheus metrics and a separate readiness endpoint do not.
 - [ ] Export request count, queue length, batch size, TTFT, TPOT, prefill/decode throughput, KV block usage, prefix-cache hit rate, preemption count, OOM count, and exception count.
-- [ ] Add structured logs with request IDs.
+- [x] Add structured request lifecycle logs with request IDs.
 - [ ] Provide a Dockerfile or locked environment instructions for reproducible setup.
 - [ ] Add CI for linting, CPU tests, optional GPU tests, and API integration tests.
 

@@ -51,6 +51,26 @@ def parse_csv_ints(raw: str, name: str) -> list[int]:
     return values
 
 
+def parse_csv_nonnegative_ints(raw: str, name: str) -> list[int]:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"{name} must be a non-empty comma-separated list")
+    values = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            raise ValueError(f"{name} contains an empty value")
+        try:
+            value = int(item)
+        except ValueError as exc:
+            raise ValueError(f"{name} contains a non-integer value: {item!r}") from exc
+        if value < 0:
+            raise ValueError(f"{name} values must be non-negative")
+        values.append(value)
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} must not contain duplicate values")
+    return values
+
+
 def validate_workload_capacity(max_model_len: int, input_lens: list[int], output_lens: list[int], block_size: int = 16) -> dict[str, int]:
     """Validate that every workload fits prompt plus generated tokens and KV blocks."""
     if max_model_len <= 0 or block_size <= 0:
@@ -332,7 +352,10 @@ async def run_once(
             max_model_len=args.max_model_len,
             max_num_seqs=args.max_num_seqs,
             max_num_batched_tokens=args.max_num_batched_tokens,
-            prefix_cache_max_blocks=args.prefix_cache_max_blocks,
+            prefix_cache_max_blocks=getattr(args, "prefix_cache_max_blocks", -1),
+            scheduling_policy=getattr(args, "scheduling_policy", "fcfs"),
+            preemption_cooldown_steps=getattr(args, "preemption_cooldown_steps", 2),
+            max_preemptions_per_step=getattr(args, "max_preemptions_per_step", 1),
             gpu_memory_utilization=args.gpu_memory_utilization,
             dtype=args.dtype,
             tensor_parallel_size=args.tensor_parallel_size,
@@ -481,19 +504,21 @@ def markdown(records: list[dict[str, Any]], args: argparse.Namespace, env: dict[
         "",
         "KV preflight is a fast diagnostic, not a guarantee: `theoretical_minimum_utilization_for_one_kv_block` covers only estimated model bytes plus one KV block. The conservative action is to increase `gpu_memory_utilization` or reduce `max_model_len`/`max_num_seqs`; warmup workspace and allocator fragmentation can still cause `preflight passed; runtime allocation failed`.",
         "",
-        "| concurrency | input | output | status | TTFT p50/p95/p99 (s) | TPOT p50/p95/p99 (s) | E2E p50/p95/p99 (s) | output tok/s | KV peak | prefix hit/token-hit | failure |",
-        "|---:|---:|---:|---|---|---|---|---:|---:|---|---|",
+        "| policy | concurrency | input | output | status | TTFT p50/p95/p99 (s) | TPOT p50/p95/p99 (s) | E2E p50/p95/p99 (s) | output tok/s | KV peak | prefix hit/token-hit | admission A/D/R | failure |",
+        "|---|---:|---:|---:|---|---|---|---|---:|---:|---|---|---|",
     ]
     for record in records:
         metric = record.get("metrics") or {}
         scheduler = metric.get("scheduler", {})
         lines.append(
-            f"| {record['concurrency']} | {record['input_len']} | {record['output_len']} | {record['status']} | "
+            f"| {record.get('scheduling_policy', args.scheduling_policy)} | {record['concurrency']} | {record['input_len']} | {record['output_len']} | {record['status']} | "
             f"{record['ttft_s']['p50']}/{record['ttft_s']['p95']}/{record['ttft_s']['p99']} | "
             f"{record['tpot_s']['p50']}/{record['tpot_s']['p95']}/{record['tpot_s']['p99']} | "
             f"{record['e2e_latency_s']['p50']}/{record['e2e_latency_s']['p95']}/{record['e2e_latency_s']['p99']} | "
             f"{record['global_output_tokens_per_second']} | {scheduler.get('kv_blocks_peak_used')} | "
-            f"{scheduler.get('prefix_cache_hit_rate')}/{scheduler.get('prefix_cache_token_hit_rate')} | {record.get('failure') or ''} |"
+            f"{scheduler.get('prefix_cache_hit_rate')}/{scheduler.get('prefix_cache_token_hit_rate')} | "
+            f"{metric.get('admitted_requests', 0)}/{metric.get('deferred_requests', 0)}/{metric.get('rejected_requests', 0)} | "
+            f"{record.get('failure') or ''} |"
         )
     lines += ["", f"JSONL: `{args.output_jsonl}`", ""]
     return "\n".join(lines)
@@ -552,6 +577,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--max-model-len", type=positive_cli_int, default=8192)
     parser.add_argument("--max-num-seqs", type=positive_cli_int, default=512)
+    parser.add_argument("--preemption-cooldown-steps", type=nonnegative_cli_int, default=2)
+    parser.add_argument("--max-preemptions-per-step", type=positive_cli_int, default=1)
+    parser.add_argument("--preemption-cooldown-grid", default=None,
+                        help="comma-separated cooldown values for parameter sweeps")
+    parser.add_argument("--max-preemptions-per-step-grid", default=None,
+                        help="comma-separated per-step preemption limits for parameter sweeps")
+    parser.add_argument(
+        "--scheduling-policy",
+        choices=("fcfs", "throughput", "latency"),
+        default="fcfs",
+        help="waiting-queue policy for a single-policy run",
+    )
+    parser.add_argument(
+        "--scheduling-policy-matrix",
+        action="store_true",
+        help="run fcfs, throughput, and latency under the same workloads",
+    )
     parser.add_argument("--max-num-batched-tokens", type=positive_cli_int, default=32768)
     parser.add_argument("--prefix-cache-max-blocks", type=int, default=-1, help="maximum inactive prefix-cache blocks; -1 means all KV blocks")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
@@ -574,11 +616,26 @@ def main(argv: list[str] | None = None) -> int:
         args.concurrencies = parse_csv_ints(args.concurrencies, "concurrencies")
         args.input_lens = parse_csv_ints(args.input_lens, "input-lens")
         args.output_lens = parse_csv_ints(args.output_lens, "output-lens")
+        args.preemption_cooldown_grid = (
+            parse_csv_nonnegative_ints(args.preemption_cooldown_grid, "preemption-cooldown-grid")
+            if args.preemption_cooldown_grid is not None
+            else [args.preemption_cooldown_steps]
+        )
+        args.max_preemptions_per_step_grid = (
+            parse_csv_ints(args.max_preemptions_per_step_grid, "max-preemptions-per-step-grid")
+            if args.max_preemptions_per_step_grid is not None
+            else [args.max_preemptions_per_step]
+        )
         if args.runs <= 0 or args.warmup_runs < 0:
             raise ValueError("runs must be positive and warmup-runs must be non-negative")
         if args.max_model_len <= 0 or args.max_num_seqs <= 0 or args.max_num_batched_tokens <= 0:
             raise ValueError("model and scheduler capacities must be positive")
         validate_workload_capacity(args.max_model_len, args.input_lens, args.output_lens)
+        args.scheduling_policies = (
+            ["fcfs", "throughput", "latency"]
+            if args.scheduling_policy_matrix
+            else [args.scheduling_policy]
+        )
     except ValueError as exc:
         parser.error(str(exc))
     args._command = [sys.executable, "scripts/benchmark_serving.py", *(argv if argv is not None else sys.argv[1:])]
@@ -591,38 +648,61 @@ def main(argv: list[str] | None = None) -> int:
 
     async def execute():
         output_lens = list(args.output_lens)
-        for concurrency in args.concurrencies:
-            for input_len in args.input_lens:
-                for output_len in output_lens:
-                    args.output_lens = [output_len]
-                    prompts_data = make_prompts(args.model, concurrency, input_len, args.seed, args.prefix_sharing_ratio)
-                    prompts = prompts_data["prompt_token_ids"]
-                    for warmup_index in range(args.warmup_runs):
-                        await run_once(args, prompts, -(warmup_index + 1), True, preflight)
-                    for run_index in range(args.runs):
-                        record = await run_once(args, prompts, run_index, False, preflight)
-                        record.update({"prompt_token_sha256": prompts_data["prompt_token_sha256"],
-                                       "prefix_sharing_tokens": prompts_data["prefix_sharing_tokens"],
-                                       "environment": env,
-                                       "command": args._command,
-                                       "model": args.model,
-                                       "dtype": args.dtype,
-                                       "tensor_parallel_size": args.tensor_parallel_size,
-                                       "max_model_len": args.max_model_len,
-                                       "max_num_seqs": args.max_num_seqs,
-                                       "max_num_batched_tokens": args.max_num_batched_tokens})
-                        records.append(record)
-                        write_jsonl_record(output_jsonl, record)
+        for scheduling_policy in args.scheduling_policies:
+            args.scheduling_policy = scheduling_policy
+            for cooldown_steps in args.preemption_cooldown_grid:
+                args.preemption_cooldown_steps = cooldown_steps
+                for max_preemptions in args.max_preemptions_per_step_grid:
+                    args.max_preemptions_per_step = max_preemptions
+                    for concurrency in args.concurrencies:
+                        for input_len in args.input_lens:
+                            for output_len in output_lens:
+                                args.output_lens = [output_len]
+                                prompts_data = make_prompts(
+                                    args.model, concurrency, input_len, args.seed,
+                                    args.prefix_sharing_ratio
+                                )
+                                prompts = prompts_data["prompt_token_ids"]
+                                for warmup_index in range(args.warmup_runs):
+                                    await run_once(args, prompts, -(warmup_index + 1), True, preflight)
+                                for run_index in range(args.runs):
+                                    record = await run_once(args, prompts, run_index, False, preflight)
+                                    record.update({
+                                        "prompt_token_sha256": prompts_data["prompt_token_sha256"],
+                                        "prefix_sharing_tokens": prompts_data["prefix_sharing_tokens"],
+                                        "environment": env,
+                                        "command": args._command,
+                                        "model": args.model,
+                                        "dtype": args.dtype,
+                                        "tensor_parallel_size": args.tensor_parallel_size,
+                                        "max_model_len": args.max_model_len,
+                                        "max_num_seqs": args.max_num_seqs,
+                                        "max_num_batched_tokens": args.max_num_batched_tokens,
+                                        "scheduling_policy": scheduling_policy,
+                                        "preemption_cooldown_steps": cooldown_steps,
+                                        "max_preemptions_per_step": max_preemptions,
+                                    })
+                                    records.append(record)
+                                    write_jsonl_record(output_jsonl, record)
 
     if not preflight.get("ok"):
-        for concurrency in args.concurrencies:
-            for input_len in args.input_lens:
-                for output_len in args.output_lens:
-                    record = preflight_failure_record(args, preflight, concurrency, input_len, output_len)
-                    record.update({"environment": env, "command": args._command, "model": args.model, "dtype": args.dtype,
-                                   "tensor_parallel_size": args.tensor_parallel_size})
-                    records.append(record)
-                    write_jsonl_record(output_jsonl, record)
+        for scheduling_policy in args.scheduling_policies:
+            for cooldown_steps in args.preemption_cooldown_grid:
+                for max_preemptions in args.max_preemptions_per_step_grid:
+                    for concurrency in args.concurrencies:
+                        for input_len in args.input_lens:
+                            for output_len in args.output_lens:
+                                record = preflight_failure_record(args, preflight, concurrency, input_len, output_len)
+                                record.update({
+                                    "environment": env, "command": args._command,
+                                    "model": args.model, "dtype": args.dtype,
+                                    "tensor_parallel_size": args.tensor_parallel_size,
+                                    "scheduling_policy": scheduling_policy,
+                                    "preemption_cooldown_steps": cooldown_steps,
+                                    "max_preemptions_per_step": max_preemptions,
+                                })
+                                records.append(record)
+                                write_jsonl_record(output_jsonl, record)
     else:
         try:
             asyncio.run(execute())

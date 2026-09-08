@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 import uuid
 from dataclasses import dataclass, field
@@ -14,6 +16,8 @@ from nanovllm.engine.sequence import SequenceStatus
 from nanovllm.sampling_params import SamplingParams
 
 
+logger = logging.getLogger("nanovllm.serving")
+
 REQUEST_STATUSES = {"queued", "prefill", "decode", "finished", "cancelled", "failed"}
 TERMINAL_STATUSES = {"finished", "cancelled", "failed"}
 
@@ -22,6 +26,12 @@ class QueueFullError(RuntimeError):
     """The configured intake queue is full; API callers map this to HTTP 429."""
 
     status_code = 429
+
+
+class AdmissionRejectedError(ValueError):
+    """The request cannot fit the configured model/KV capacity."""
+
+    status_code = 400
 
 
 @dataclass(slots=True)
@@ -63,6 +73,8 @@ class AsyncEngine:
         self.request_timeout_s = self._positive_float(kwargs.pop("request_timeout_s", 300.0), "request_timeout_s")
         self.stream_queue_size = self._positive_int(kwargs.pop("stream_queue_size", 16), "stream_queue_size")
         self.engine = LLMEngine(model, **kwargs)
+        config = getattr(self.engine, "config", None)
+        self._max_model_len = getattr(config, "max_model_len", None)
         self._new_requests: asyncio.Queue[tuple[str | list[int], SamplingParams, _RequestState]] = asyncio.Queue()
         self._states: dict[str, _RequestState] = {}
         self._streams: dict[int, _RequestState] = {}
@@ -77,6 +89,11 @@ class AsyncEngine:
             "prompt_tokens_total": 0,
             "generation_tokens_total": 0,
             "first_tokens_total": 0,
+        }
+        self._admission_counters = {
+            "admitted": 0,
+            "deferred": 0,
+            "rejected": 0,
         }
         self._metric_sums = {
             "ttft_seconds": 0.0,
@@ -117,8 +134,65 @@ class AsyncEngine:
     def can_accept_request(self, count: int = 1) -> bool:
         return not self._closed and isinstance(count, int) and count > 0 and self._active_count() + count <= self.max_queue_size
 
+    def _prompt_tokens(self, prompt: str | list[int]) -> int:
+        if isinstance(prompt, list):
+            return len(prompt)
+        return len(self.engine.tokenizer.encode(prompt))
+
+    def _admission_capacity(
+        self,
+        prompt_tokens: int,
+        max_tokens: int,
+        reserved_blocks: int = 0,
+        prompt_token_ids: list[int] | None = None,
+    ):
+        scheduler = getattr(self.engine, "scheduler", None)
+        manager = getattr(scheduler, "block_manager", None)
+        blocks = getattr(manager, "blocks", None)
+        if not blocks:
+            return "admit", 0
+        block_size = getattr(manager, "block_size", 0)
+        if not isinstance(block_size, int) or block_size <= 0:
+            return "admit", 0
+        required = (prompt_tokens + max_tokens + block_size - 1) // block_size
+        cached_prefix_blocks = 0
+        counter = getattr(manager, "count_cached_prefix_blocks", None)
+        if prompt_token_ids is not None and callable(counter):
+            cached_prefix_blocks = counter(prompt_token_ids)
+            required = max(0, required - cached_prefix_blocks)
+        total = len(blocks)
+        if required > total:
+            return "reject", required
+        free_ids = getattr(manager, "free_block_ids", None)
+        if free_ids is None:
+            free = total - len(getattr(manager, "used_block_ids", ()))
+        else:
+            free = len(free_ids)
+        return ("defer" if required > free - reserved_blocks else "admit"), required
+
+    def check_admission(self, prompt: str | list[int], max_tokens: int) -> tuple[bool, str | None]:
+        prompt_tokens = self._prompt_tokens(prompt)
+        prompt_token_ids = prompt if isinstance(prompt, list) else self.engine.tokenizer.encode(prompt)
+        if self._max_model_len is not None and prompt_tokens + max_tokens > self._max_model_len:
+            return False, f"prompt plus max_tokens exceeds max_model_len={self._max_model_len}"
+        decision, required = self._admission_capacity(
+            prompt_tokens, max_tokens, prompt_token_ids=prompt_token_ids
+        )
+        if decision == "reject":
+            return False, f"request requires {required} KV blocks, exceeding configured capacity"
+        return True, None
+
     def is_unavailable(self) -> bool:
         return self._engine_error is not None
+
+    def is_ready(self) -> bool:
+        task = self._runner_task
+        return (
+            not self._closed
+            and self._engine_error is None
+            and task is not None
+            and not task.done()
+        )
 
     @property
     def engine_error(self) -> str | None:
@@ -136,6 +210,18 @@ class AsyncEngine:
             "error": state.error,
         }
 
+    def _log_event(self, event: str, state: _RequestState | None = None, **fields):
+        payload = {"event": event, "timestamp": monotonic()}
+        if state is not None:
+            payload.update({
+                "request_id": state.request_id,
+                "seq_id": state.seq_id,
+                "status": state.status,
+                "prompt_tokens": state.prompt_tokens,
+            })
+        payload.update(fields)
+        logger.info(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
     def _record_first_token(self, state: _RequestState):
         if state.first_token_at is not None:
             return
@@ -151,6 +237,13 @@ class AsyncEngine:
             return
         state.metrics_recorded = True
         state.completed_at = monotonic()
+        self._log_event(
+            "request_terminal",
+            state,
+            finish_reason=state.finish_reason,
+            generated_tokens=len(state.token_ids),
+            e2e_seconds=state.completed_at - state.created_at,
+        )
         self._metric_counters["prompt_tokens_total"] += state.prompt_tokens
         self._metric_counters["generation_tokens_total"] += len(state.token_ids)
         if state.status == "finished":
@@ -217,6 +310,9 @@ class AsyncEngine:
             "ttft_seconds_count": metric_counts.get("ttft_seconds", 0),
             "e2e_request_seconds_sum": metric_sums.get("e2e_request_seconds", 0.0),
             "e2e_request_seconds_count": metric_counts.get("e2e_request_seconds", 0),
+            "admitted_requests": getattr(self, "_admission_counters", {}).get("admitted", 0),
+            "deferred_requests": getattr(self, "_admission_counters", {}).get("deferred", 0),
+            "rejected_requests": getattr(self, "_admission_counters", {}).get("rejected", 0),
         }
 
     async def shutdown(self):
@@ -246,6 +342,20 @@ class AsyncEngine:
             raise RuntimeError(f"AsyncEngine is closed{detail}")
         await self.start()
         request_id = request_id or self.new_request_id("req")
+        prompt_tokens = self._prompt_tokens(prompt)
+        prompt_token_ids = prompt if isinstance(prompt, list) else self.engine.tokenizer.encode(prompt)
+        allowed, detail = self.check_admission(prompt_token_ids, sampling_params.max_tokens)
+        if not allowed:
+            self._admission_counters["rejected"] += 1
+            self._log_event(
+                "request_rejected",
+                None,
+                request_id=request_id,
+                status="rejected",
+                prompt_tokens=prompt_tokens,
+                reason=detail,
+            )
+            raise AdmissionRejectedError(detail)
         async with self._lock:
             if request_id in self._states:
                 raise ValueError(f"duplicate request_id: {request_id}")
@@ -438,6 +548,7 @@ class AsyncEngine:
                 return
 
     async def _drain_new_requests(self):
+        reserved_blocks = 0
         while True:
             try:
                 prompt, sampling_params, state = self._new_requests.get_nowait()
@@ -446,10 +557,40 @@ class AsyncEngine:
             if state.status in TERMINAL_STATUSES:
                 continue
             try:
-                state.prompt_tokens = (
-                    len(prompt)
-                    if isinstance(prompt, list)
-                    else len(self.engine.tokenizer.encode(prompt))
+                state.prompt_tokens = self._prompt_tokens(prompt)
+                decision, required_blocks = self._admission_capacity(
+                    state.prompt_tokens, sampling_params.max_tokens, reserved_blocks,
+                    prompt if isinstance(prompt, list) else self.engine.tokenizer.encode(prompt),
+                )
+                if decision == "reject":
+                    self._admission_counters["rejected"] += 1
+                    self._log_event(
+                        "request_rejected",
+                        state,
+                        reason="kv_capacity",
+                        required_blocks=required_blocks,
+                    )
+                    self._complete(
+                        state, "failed", "admission_rejected",
+                        f"request requires {required_blocks} KV blocks, exceeding configured capacity",
+                    )
+                    continue
+                if decision == "defer":
+                    self._admission_counters["deferred"] += 1
+                    self._log_event(
+                        "request_deferred",
+                        state,
+                        reason="kv_capacity",
+                        required_blocks=required_blocks,
+                    )
+                    self._new_requests.put_nowait((prompt, sampling_params, state))
+                    return
+                self._admission_counters["admitted"] += 1
+                reserved_blocks += required_blocks
+                self._log_event(
+                    "request_admitted",
+                    state,
+                    required_blocks=required_blocks,
                 )
                 seq_id = self.engine.add_request(prompt, sampling_params)
                 state.seq_id = seq_id

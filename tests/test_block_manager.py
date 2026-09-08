@@ -21,6 +21,7 @@ def test_reuses_complete_prefix_blocks_after_deallocation():
     manager.allocate(second, 1)
     assert second.num_cached_tokens == 256
     assert len(second.block_table) == 2
+    assert manager.count_cached_prefix_blocks(second.token_ids) == 1
 
 
 def test_deallocate_returns_unshared_blocks_to_free_pool():
@@ -84,7 +85,7 @@ def test_allocates_plain_free_blocks_before_cached_lru_blocks():
     manager.allocate(plain, 0)
 
     assert plain.block_table[0] != cached_block_id
-    assert cached_block_id in manager.hash_to_block_id
+    assert cached_block_id in manager.hash_to_block_id.values()
     manager.deallocate(plain)
 
     # Consume every ordinary free block while the cached block remains idle.
@@ -113,4 +114,16 @@ def test_free_queue_and_cache_invariants_hold_after_eviction():
 
     third = make_sequence(list(range(2000, 2256)))
     manager.allocate(third, 0)
+    assert manager.check_free_block_invariants()
+
+
+def test_indexed_free_queues_support_constant_time_removal_semantics():
+    manager = BlockManager(num_blocks=3, block_size=256)
+    assert manager.free_plain_blocks == 3
+    first = manager._allocate_block()
+    assert first == 0
+    assert list(manager.free_block_ids) == [1, 2]
+    manager.blocks[first].ref_count = 0
+    manager._deallocate_block(first)
+    assert list(manager.free_block_ids) == [1, 2, 0]
     assert manager.check_free_block_invariants()

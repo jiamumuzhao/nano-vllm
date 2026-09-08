@@ -1,14 +1,15 @@
 from types import SimpleNamespace
 
-from nanovllm.engine.scheduler import Scheduler
+from nanovllm.engine.scheduler import Scheduler, WaitingQueue
 from nanovllm.engine.sequence import Sequence, SequenceStatus
 
 
-def make_scheduler(max_num_batched_tokens=6, max_num_seqs=2):
+def make_scheduler(max_num_batched_tokens=6, max_num_seqs=2, scheduling_policy="fcfs"):
     Sequence.block_size = 4
     return Scheduler(SimpleNamespace(
         max_num_seqs=max_num_seqs,
         max_num_batched_tokens=max_num_batched_tokens,
+        scheduling_policy=scheduling_policy,
         eos=-1,
         num_kvcache_blocks=32,
         kvcache_block_size=4,
@@ -103,3 +104,76 @@ def test_preemption_protects_a_previously_preempted_request():
     }
 
     assert scheduler._select_preemption_victim(first) is second
+
+
+def test_waiting_queue_compacts_stale_entries_after_cancellation_burst():
+    queue = WaitingQueue()
+    sequences = [Sequence([index]) for index in range(100)]
+    for index, seq in enumerate(sequences):
+        queue.push(seq, (0, index))
+    for seq in sequences[:90]:
+        queue.remove(seq)
+
+    assert len(queue) == 10
+    assert len(queue._heap) <= 2 * len(queue) + 64
+    assert [seq.seq_id for seq in queue] == [seq.seq_id for seq in sequences[90:]]
+
+
+def test_latency_policy_prefers_shorter_estimated_work():
+    scheduler = make_scheduler(scheduling_policy="latency")
+    long_seq = Sequence(list(range(20)))
+    short_seq = Sequence([1, 2])
+    scheduler.add(long_seq)
+    scheduler.add(short_seq)
+
+    assert scheduler._pop_waiting() is short_seq
+
+
+def test_throughput_policy_prefers_smaller_kv_footprint():
+    scheduler = make_scheduler(scheduling_policy="throughput")
+    large_seq = Sequence(list(range(15)))
+    small_seq = Sequence([1, 2, 3])
+    scheduler.add(large_seq)
+    scheduler.add(small_seq)
+
+    assert scheduler._pop_waiting() is small_seq
+
+
+def test_scheduler_snapshot_exposes_policy():
+    scheduler = make_scheduler(scheduling_policy="latency")
+    assert scheduler.get_metrics_snapshot()["scheduling_policy"] == "latency"
+
+
+def test_preemption_cooldown_prefers_a_different_victim():
+    scheduler = make_scheduler()
+    scheduler._scheduler_step = 5
+    recent = Sequence([1, 2, 3, 4])
+    alternative = Sequence([5, 6, 7, 8])
+    scheduler.running.extend([recent, alternative])
+    scheduler._sequence_meta[recent.seq_id] = {
+        "arrival_order": 0,
+        "queued_step": 0,
+        "admitted_step": 1,
+        "preemption_count": 1,
+        "last_preempt_step": 4,
+    }
+    scheduler._sequence_meta[alternative.seq_id] = {
+        "arrival_order": 1,
+        "queued_step": 0,
+        "admitted_step": 1,
+        "preemption_count": 0,
+        "last_preempt_step": -100,
+    }
+
+    assert scheduler._select_preemption_victim(recent) is alternative
+
+
+def test_preemption_records_recompute_tokens():
+    scheduler = make_scheduler()
+    seq = Sequence([1, 2, 3, 4])
+    scheduler.block_manager.allocate(seq, 0)
+    scheduler.preempt(seq)
+
+    snapshot = scheduler.get_metrics_snapshot()
+    assert snapshot["preemption_recompute_tokens"] == len(seq)
+    assert snapshot["preemption_count"] == 1

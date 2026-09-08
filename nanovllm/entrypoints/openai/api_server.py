@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import time
 from typing import Any
 
@@ -8,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from nanovllm.engine.async_engine import AsyncEngine, QueueFullError
+from nanovllm.engine.async_engine import AsyncEngine, AdmissionRejectedError, QueueFullError
 from nanovllm.sampling_params import SamplingParams
 
 
@@ -88,9 +89,14 @@ def _prometheus_text(engine: AsyncEngine) -> str:
         "generation_tokens_total": "Total generated tokens",
         "first_tokens_total": "Total requests that emitted a first token",
         "preemption_count": "Total request preemptions",
+        "preemption_recompute_tokens": "Tokens that may be recomputed after preemption",
+        "preemption_cooldown_skips": "Victim candidates skipped by preemption cooldown",
         "prefix_cache_requests": "Total Prefix Cache queries",
         "prefix_cache_hit_requests": "Total requests with Prefix Cache hits",
         "prefix_cache_evictions": "Total Prefix Cache block evictions",
+        "admitted_requests": "Requests admitted after KV capacity checks",
+        "deferred_requests": "Requests deferred by KV capacity checks",
+        "rejected_requests": "Requests rejected by KV capacity checks",
     }
     for key, help_text in counters.items():
         value = snapshot.get(key, scheduler.get(key, 0))
@@ -131,6 +137,21 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/ready")
+    async def ready():
+        checker = getattr(app.state.engine, "is_ready", None)
+        if callable(checker):
+            ready_state = checker()
+        else:
+            ready_state = (
+                bool(getattr(app.state.engine, "started", False))
+                and not bool(getattr(app.state.engine, "closed", False))
+                and not bool(getattr(app.state.engine, "unavailable", False))
+            )
+        if not ready_state:
+            raise HTTPException(status_code=503, detail="engine is not ready")
+        return {"status": "ready"}
 
     @app.get("/metrics")
     async def metrics():
@@ -185,6 +206,11 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
             raise HTTPException(status_code=503, detail=detail)
         if not app.state.engine.can_accept_request():
             raise HTTPException(status_code=429, detail="request queue is full")
+        checker = getattr(app.state.engine, "check_admission", None)
+        if callable(checker):
+            allowed, detail = checker(prompt, request.max_tokens)
+            if not allowed:
+                raise HTTPException(status_code=400, detail=detail)
 
         if request.stream:
             return StreamingResponse(
@@ -198,6 +224,8 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
                 final = output
         except QueueFullError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except AdmissionRejectedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -248,6 +276,12 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
             raise HTTPException(status_code=503, detail=detail)
         if not app.state.engine.can_accept_request(len(prompts)):
             raise HTTPException(status_code=429, detail="request queue is full")
+        checker = getattr(app.state.engine, "check_admission", None)
+        if callable(checker):
+            for prompt in prompts:
+                allowed, detail = checker(prompt, request.max_tokens)
+                if not allowed:
+                    raise HTTPException(status_code=400, detail=detail)
 
         if request.stream:
             return StreamingResponse(
@@ -268,6 +302,8 @@ def create_app(engine: AsyncEngine, served_model_name: str) -> FastAPI:
                 finals.append(final)
         except QueueFullError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except AdmissionRejectedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -374,6 +410,14 @@ def parse_args():
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--max-num-seqs", type=int, default=512)
+    parser.add_argument("--preemption-cooldown-steps", type=int, default=2)
+    parser.add_argument("--max-preemptions-per-step", type=int, default=1)
+    parser.add_argument(
+        "--scheduling-policy",
+        default="fcfs",
+        choices=("fcfs", "throughput", "latency"),
+        help="waiting-queue policy: fcfs, throughput, or latency",
+    )
     parser.add_argument("--max-num-batched-tokens", type=int, default=32768)
     parser.add_argument("--prefix-cache-max-blocks", type=int, default=-1, help="maximum inactive prefix-cache blocks; -1 means all KV blocks")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
@@ -382,6 +426,8 @@ def parse_args():
     parser.add_argument("--max-queue-size", type=int, default=256)
     parser.add_argument("--request-timeout-s", type=float, default=300.0)
     parser.add_argument("--stream-queue-size", type=int, default=16)
+    parser.add_argument("--log-level", default="WARNING",
+                        choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser.parse_args()
 
 
@@ -392,11 +438,18 @@ def main():
         raise SystemExit("Install serving dependencies with `pip install -e .[serve]`.") from exc
 
     args = parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(message)s",
+    )
     engine = AsyncEngine(
         args.model,
         tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
         max_num_seqs=args.max_num_seqs,
+        scheduling_policy=args.scheduling_policy,
+        preemption_cooldown_steps=args.preemption_cooldown_steps,
+        max_preemptions_per_step=args.max_preemptions_per_step,
         max_num_batched_tokens=args.max_num_batched_tokens,
         prefix_cache_max_blocks=args.prefix_cache_max_blocks,
         gpu_memory_utilization=args.gpu_memory_utilization,

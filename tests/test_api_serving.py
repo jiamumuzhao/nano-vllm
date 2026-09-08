@@ -54,6 +54,8 @@ def test_request_status_cancel_and_completion_api():
     engine = FakeAsyncEngine()
     app = create_app(engine, "fake-model")
     with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/ready").json() == {"status": "ready"}
         assert client.get("/v1/requests/missing").status_code == 404
         response = client.post("/v1/completions", json={"prompt": "hi", "max_tokens": 1})
         assert response.status_code == 200

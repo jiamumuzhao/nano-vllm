@@ -10,6 +10,9 @@ class Config:
     model: str
     max_num_batched_tokens: int = 8192
     max_num_seqs: int = 4
+    scheduling_policy: str = "fcfs"
+    preemption_cooldown_steps: int = 2
+    max_preemptions_per_step: int = 1
     max_model_len: int = 8192
     gpu_memory_utilization: float = 0.5
     tensor_parallel_size: int = 1
@@ -28,6 +31,8 @@ class Config:
     dtype: str = "auto"
     quantization: str = "none"
     split_kv_enabled: bool = True
+    # Disable Split-KV by default on pre-Ampere GPUs where the reduce overhead outweighs the gain.
+    split_kv_auto_disable_pre_ampere: bool = True
     split_kv_threshold: int = 1024
     split_kv_partition_size: int = 1024
     split_kv_max_partitions: int = 16
@@ -44,6 +49,12 @@ class Config:
         assert self.kvcache_block_size % 16 == 0
         assert 1 <= self.tensor_parallel_size <= 8
         assert self.dtype in ("auto", "float16", "bfloat16", "float32")
+        if self.scheduling_policy not in ("fcfs", "throughput", "latency"):
+            raise ValueError("scheduling_policy must be fcfs, throughput, or latency")
+        if self.preemption_cooldown_steps < 0:
+            raise ValueError("preemption_cooldown_steps must be non-negative")
+        if self.max_preemptions_per_step < 1:
+            raise ValueError("max_preemptions_per_step must be positive")
         parsed_init = urlparse(self.distributed_init_method)
         if parsed_init.scheme != "tcp" or not parsed_init.hostname or parsed_init.port is None:
             raise ValueError(
@@ -75,6 +86,8 @@ class Config:
             raise ValueError("paged_prefill_q_tile_mode must be serial, parallel, or auto")
         if self.paged_prefill_q_tile_parallel is not None and not isinstance(self.paged_prefill_q_tile_parallel, bool):
             raise ValueError("paged_prefill_q_tile_parallel must be bool or None")
+        if not isinstance(self.split_kv_auto_disable_pre_ampere, bool):
+            raise ValueError("split_kv_auto_disable_pre_ampere must be a bool")
         if not isinstance(self.paged_prefill_auto_parallel_enabled, bool):
             raise ValueError("paged_prefill_auto_parallel_enabled must be a bool")
         if self.paged_prefill_auto_min_batch_size < 1 or self.paged_prefill_auto_min_q_tiles < 1:

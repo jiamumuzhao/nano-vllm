@@ -74,7 +74,7 @@ class ModelRunner:
         torch.set_default_device("cuda")
         split_kv_config = dict(
             quantization=config.quantization,
-            split_kv_enabled=config.split_kv_enabled,
+            split_kv_enabled=(config.split_kv_enabled and not (config.split_kv_auto_disable_pre_ampere and torch.cuda.get_device_capability()[0] < 8)),
             split_kv_threshold=config.split_kv_threshold,
             split_kv_partition_size=config.split_kv_partition_size,
             split_kv_max_partitions=config.split_kv_max_partitions,
@@ -276,18 +276,24 @@ class ModelRunner:
         positions = []
         slot_mapping = []
         context_lens = []
-        block_table_rows = []
+        use_graph_rows = not self.enforce_eager and bs <= 512
+        block_table_rows = [] if use_graph_rows else None
         for seq in seqs:
             input_ids.append(seq.last_token)
             positions.append(len(seq) - 1)
             context_lens.append(len(seq))
             slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1)
-            block_table_rows.append(tuple(seq.block_table))
+            if use_graph_rows:
+                row_version = getattr(seq, "block_table_version", -1)
+                if getattr(seq, "_decode_block_table_version", None) != row_version:
+                    seq._decode_block_table_row = tuple(seq.block_table)
+                    seq._decode_block_table_version = row_version
+                block_table_rows.append(seq._decode_block_table_row)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-        block_tables = block_table_rows if not self.enforce_eager and bs <= 512 else self.prepare_block_tables(seqs)
+        block_tables = block_table_rows if use_graph_rows else self.prepare_block_tables(seqs)
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables)
         return input_ids, positions
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import nanovllm.engine.async_engine as async_module
-from nanovllm.engine.async_engine import AsyncEngine, QueueFullError
+from nanovllm.engine.async_engine import AsyncEngine, AdmissionRejectedError, QueueFullError
 from nanovllm.engine.sequence import SequenceStatus
 from nanovllm.sampling_params import SamplingParams
 
@@ -247,3 +247,18 @@ async def test_terminal_protocol_has_no_sentinel_tasks_and_cancel_cleans_maps(fa
     assert not blocked._streams and not blocked._seq_to_request
     assert not blocked.engine.scheduler.block_manager.used_block_ids
     await blocked.shutdown()
+
+
+@run_async
+async def test_admission_rejects_request_that_exceeds_total_kv_capacity(fake_engine):
+    engine = AsyncEngine("fake")
+    manager = engine.engine.scheduler.block_manager
+    manager.blocks = [object(), object()]
+    manager.block_size = 4
+    manager.free_block_ids = deque([0, 1])
+
+    with pytest.raises(AdmissionRejectedError, match="exceeding configured capacity"):
+        await _collect(engine.generate([1] * 5, SamplingParams(max_tokens=4), request_id="too-large"))
+
+    assert engine.get_metrics_snapshot()["rejected_requests"] == 1
+    await engine.shutdown()
